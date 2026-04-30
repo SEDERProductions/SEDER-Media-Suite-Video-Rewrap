@@ -1,0 +1,348 @@
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VideoMetadata {
+    pub filename: String,
+    pub duration_ms: Option<i64>,
+    pub container: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub codec: Option<String>,
+    pub frame_rate: Option<String>,
+    pub file_size: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RewrapSegment {
+    pub name: String,
+    pub in_ms: i64,
+    pub out_ms: i64,
+    pub notes: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RewrapProject {
+    pub source_file: String,
+    pub output_file: String,
+    pub segments: Vec<RewrapSegment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapResult {
+    pub requested_ms: i64,
+    pub snapped_ms: i64,
+    pub distance_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProcessCommand {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+pub fn parse_timecode_to_ms(value: &str) -> Result<i64> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("Timecode is empty");
+    }
+    if !trimmed.contains(':') {
+        let seconds = trimmed.parse::<f64>().context("Invalid seconds value")?;
+        return Ok((seconds * 1000.0).round() as i64);
+    }
+    let parts = trimmed.split(':').collect::<Vec<_>>();
+    if parts.len() != 3 {
+        anyhow::bail!("Use HH:MM:SS.mmm timecode");
+    }
+    let hours = parts[0].parse::<i64>().context("Invalid hours")?;
+    let minutes = parts[1].parse::<i64>().context("Invalid minutes")?;
+    let seconds = parts[2].parse::<f64>().context("Invalid seconds")?;
+    Ok((((hours * 60 + minutes) * 60) * 1000) + (seconds * 1000.0).round() as i64)
+}
+
+pub fn format_ms(ms: i64) -> String {
+    let safe = ms.max(0);
+    let hours = safe / 3_600_000;
+    let minutes = (safe % 3_600_000) / 60_000;
+    let seconds = (safe % 60_000) / 1000;
+    let millis = safe % 1000;
+    format!("{hours:02}:{minutes:02}:{seconds:02}.{millis:03}")
+}
+
+pub fn parse_ffprobe_keyframes(output: &str) -> Vec<i64> {
+    let mut frames = output
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed == "N/A" {
+                return None;
+            }
+            trimmed
+                .parse::<f64>()
+                .ok()
+                .map(|seconds| (seconds * 1000.0).round() as i64)
+        })
+        .collect::<Vec<_>>();
+    frames.sort_unstable();
+    frames.dedup();
+    frames
+}
+
+pub fn parse_ffprobe_metadata(output: &str, source: &Path, file_size: u64) -> VideoMetadata {
+    let mut metadata = VideoMetadata {
+        filename: source
+            .file_name()
+            .and_then(|v| v.to_str())
+            .unwrap_or_default()
+            .to_string(),
+        file_size,
+        ..VideoMetadata::default()
+    };
+    for line in output.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let value = value.trim();
+        match key.trim() {
+            "format_name" => metadata.container = Some(value.to_string()),
+            "duration" => {
+                metadata.duration_ms = value
+                    .parse::<f64>()
+                    .ok()
+                    .map(|seconds| (seconds * 1000.0).round() as i64);
+            }
+            "width" => metadata.width = value.parse::<u32>().ok(),
+            "height" => metadata.height = value.parse::<u32>().ok(),
+            "codec_name" => metadata.codec = Some(value.to_string()),
+            "avg_frame_rate" | "r_frame_rate" if metadata.frame_rate.is_none() => {
+                if value != "0/0" {
+                    metadata.frame_rate = Some(value.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    metadata
+}
+
+pub fn nearest_keyframe(keyframes: &[i64], requested_ms: i64) -> Option<SnapResult> {
+    keyframes
+        .iter()
+        .copied()
+        .min_by_key(|candidate| (candidate - requested_ms).abs())
+        .map(|snapped_ms| SnapResult {
+            requested_ms,
+            snapped_ms,
+            distance_ms: (snapped_ms - requested_ms).abs(),
+        })
+}
+
+pub fn segment_duration(segment: &RewrapSegment) -> i64 {
+    (segment.out_ms - segment.in_ms).max(0)
+}
+
+pub fn total_enabled_duration(segments: &[RewrapSegment]) -> i64 {
+    segments
+        .iter()
+        .filter(|segment| segment.enabled)
+        .map(segment_duration)
+        .sum()
+}
+
+pub fn validate_segment(segment: &RewrapSegment, keyframes: &[i64]) -> Result<()> {
+    if segment.in_ms >= segment.out_ms {
+        anyhow::bail!(
+            "Segment '{}' has an out point before its in point",
+            segment.name
+        );
+    }
+    if keyframes.binary_search(&segment.in_ms).is_err() {
+        anyhow::bail!(
+            "Segment '{}' in point is not a detected keyframe",
+            segment.name
+        );
+    }
+    if keyframes.binary_search(&segment.out_ms).is_err() {
+        anyhow::bail!(
+            "Segment '{}' out point is not a detected keyframe",
+            segment.name
+        );
+    }
+    Ok(())
+}
+
+pub fn validate_segments(segments: &[RewrapSegment], keyframes: &[i64]) -> Result<()> {
+    for segment in segments.iter().filter(|segment| segment.enabled) {
+        validate_segment(segment, keyframes)?;
+    }
+    Ok(())
+}
+
+pub fn move_segment(segments: &mut [RewrapSegment], index: usize, direction: i32) {
+    if direction < 0 && index > 0 {
+        segments.swap(index, index - 1);
+    } else if direction > 0 && index + 1 < segments.len() {
+        segments.swap(index, index + 1);
+    }
+}
+
+pub fn ffprobe_keyframe_command(source: &Path) -> ProcessCommand {
+    ProcessCommand {
+        program: "ffprobe".into(),
+        args: vec![
+            "-v".into(),
+            "error".into(),
+            "-select_streams".into(),
+            "v:0".into(),
+            "-skip_frame".into(),
+            "nokey".into(),
+            "-show_entries".into(),
+            "frame=best_effort_timestamp_time".into(),
+            "-of".into(),
+            "default=noprint_wrappers=1:nokey=1".into(),
+            source.to_string_lossy().to_string(),
+        ],
+    }
+}
+
+pub fn ffprobe_metadata_command(source: &Path) -> ProcessCommand {
+    ProcessCommand {
+        program: "ffprobe".into(),
+        args: vec![
+            "-v".into(), "error".into(),
+            "-show_entries".into(), "format=format_name,duration:stream=codec_name,width,height,avg_frame_rate,r_frame_rate".into(),
+            "-of".into(), "default=noprint_wrappers=1".into(),
+            source.to_string_lossy().to_string(),
+        ],
+    }
+}
+
+pub fn ffmpeg_segment_command(
+    source: &Path,
+    segment: &RewrapSegment,
+    output: &Path,
+) -> ProcessCommand {
+    ProcessCommand {
+        program: "ffmpeg".into(),
+        args: vec![
+            "-y".into(),
+            "-ss".into(),
+            format_ms(segment.in_ms),
+            "-to".into(),
+            format_ms(segment.out_ms),
+            "-i".into(),
+            source.to_string_lossy().to_string(),
+            "-map".into(),
+            "0".into(),
+            "-c".into(),
+            "copy".into(),
+            "-avoid_negative_ts".into(),
+            "make_zero".into(),
+            output.to_string_lossy().to_string(),
+        ],
+    }
+}
+
+pub fn ffmpeg_concat_command(list_file: &Path, output: &Path) -> ProcessCommand {
+    ProcessCommand {
+        program: "ffmpeg".into(),
+        args: vec![
+            "-y".into(),
+            "-f".into(),
+            "concat".into(),
+            "-safe".into(),
+            "0".into(),
+            "-i".into(),
+            list_file.to_string_lossy().to_string(),
+            "-c".into(),
+            "copy".into(),
+            output.to_string_lossy().to_string(),
+        ],
+    }
+}
+
+pub fn ffplay_preview_command(source: &Path, start_ms: i64) -> ProcessCommand {
+    ProcessCommand {
+        program: "ffplay".into(),
+        args: vec![
+            "-autoexit".into(),
+            "-ss".into(),
+            format_ms(start_ms),
+            source.to_string_lossy().to_string(),
+        ],
+    }
+}
+
+pub fn save_project(path: &Path, project: &RewrapProject) -> Result<()> {
+    let json = serde_json::to_string_pretty(project)?;
+    fs::write(path, json).with_context(|| format!("Unable to write {}", path.display()))
+}
+
+pub fn load_project(path: &Path) -> Result<RewrapProject> {
+    let json =
+        fs::read_to_string(path).with_context(|| format!("Unable to read {}", path.display()))?;
+    Ok(serde_json::from_str(&json)?)
+}
+
+fn csv_cell(value: impl AsRef<str>) -> String {
+    format!("\"{}\"", value.as_ref().replace('"', "\"\""))
+}
+
+pub fn rewrap_report_txt(source: &Path, output: &Path, segments: &[RewrapSegment]) -> String {
+    let enabled = segments
+        .iter()
+        .filter(|segment| segment.enabled)
+        .collect::<Vec<_>>();
+    let mut report = format!(
+        "SEDER Media Suite Video Rewrap Report\nSource file: {}\nOutput file: {}\nExport mode: keyframe-aligned stream copy\nExport timestamp: {}\nTotal selected duration: {}\n\n",
+        source.display(),
+        output.display(),
+        current_timestamp(),
+        format_ms(total_enabled_duration(segments))
+    );
+    for segment in enabled {
+        report.push_str(&format!(
+            "{}\nIn keyframe: {}\nOut keyframe: {}\nDuration: {}\nNotes: {}\n\n",
+            segment.name,
+            format_ms(segment.in_ms),
+            format_ms(segment.out_ms),
+            format_ms(segment_duration(segment)),
+            segment.notes
+        ));
+    }
+    report
+}
+
+pub fn rewrap_report_csv(source: &Path, output: &Path, segments: &[RewrapSegment]) -> String {
+    let mut out = String::from("\"source_file\",\"output_file\",\"export_mode\",\"segment_name\",\"in_keyframe_time\",\"out_keyframe_time\",\"duration\",\"notes\",\"total_selected_duration\",\"export_timestamp\"\n");
+    let timestamp = current_timestamp();
+    let total = format_ms(total_enabled_duration(segments));
+    for segment in segments.iter().filter(|segment| segment.enabled) {
+        let row = [
+            source.display().to_string(),
+            output.display().to_string(),
+            "keyframe-aligned stream copy".to_string(),
+            segment.name.clone(),
+            format_ms(segment.in_ms),
+            format_ms(segment.out_ms),
+            format_ms(segment_duration(segment)),
+            segment.notes.clone(),
+            total.clone(),
+            timestamp.clone(),
+        ];
+        out.push_str(&row.iter().map(csv_cell).collect::<Vec<_>>().join(","));
+        out.push('\n');
+    }
+    out
+}
+
+fn current_timestamp() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
+pub fn temp_segment_path(temp_dir: &Path, index: usize, extension: &str) -> PathBuf {
+    temp_dir.join(format!("segment-{index:04}.{extension}"))
+}

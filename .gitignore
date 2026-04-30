@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+
+# Rust
+target/
+Cargo.lock.bak
+
+# Qt / CMake
+qt/build/
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+*.cmake.user
+*.autosave
+*.creator
+*.creator.user
+*.files
+*.includes
+
+# Release output
+release/
+*.zip
+*.AppImage
+*.dmg
+*.exe
+*.msi
+*.sha256
+
+# Generated/static output
+dist/
+
+# Local machine files
+.DS_Store
+*.log
+*.tmp
+.env
+.env.*
+.vscode/
+.idea/

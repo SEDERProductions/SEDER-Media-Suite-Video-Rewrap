@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux system packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            zip \
+            libgl1-mesa-dev \
+            libxkbcommon-x11-0 \
+            libxcb-cursor0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-render-util0 \
+            libxcb-xinerama0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.7.*'
+          cache: true
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Rust format
+        run: cargo fmt --check
+
+      - name: Rust check
+        run: cargo check
+
+      - name: Rust clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Rust tests
+        run: cargo test
+
+      - name: Configure Qt
+        run: cmake -S qt -B qt/build/release -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Qt
+        run: cmake --build qt/build/release --config Release
+
+      - name: Qt tests
+        run: ctest --test-dir qt/build/release --build-config Release --output-on-failure

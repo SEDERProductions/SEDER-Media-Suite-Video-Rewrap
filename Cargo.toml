@@ -1,0 +1,23 @@
+[package]
+name = "seder-video-rewrap"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+readme = "README.md"
+publish = false
+
+[workspace]
+resolver = "2"
+
+[lib]
+name = "seder_video_rewrap"
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4.44", features = ["std", "clock"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+tempfile = "3.13"
