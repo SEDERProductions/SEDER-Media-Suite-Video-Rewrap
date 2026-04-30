@@ -118,7 +118,7 @@ private:
     void clearMediaState();
     void applyMetadata(const QJsonObject &metadata, const QJsonArray &keyframes);
     void updateTotalDuration();
-    QString formatMs(qint64 milliseconds) const;
+    static QString formatMs(qint64 milliseconds);
     QString displayPath(const QString &path) const;
     QString toolStatusText() const;
     QJsonArray keyframesJson() const;
