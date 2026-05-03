@@ -21,14 +21,15 @@ add_custom_target(seder_video_rewrap_core ALL
     VERBATIM
 )
 
-set(SEDER_APP_ICON_WINDOWS_RC "${CMAKE_CURRENT_SOURCE_DIR}/app.rc")
+set(SEDER_APP_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../assets/icon.ico")
 
 # CMake builds a flat executable on macOS; scripts/package-release.mjs assembles the
 # .app bundle from scratch (Info.plist, icon.icns, codesign). Keeping the CMake build
 # bundle-free avoids two divergent bundle layouts for one binary.
 set(SEDER_APP_PLATFORM_SOURCES "")
-if(WIN32 AND EXISTS "${SEDER_APP_ICON_WINDOWS_RC}")
-    list(APPEND SEDER_APP_PLATFORM_SOURCES "${SEDER_APP_ICON_WINDOWS_RC}")
+if(WIN32 AND EXISTS "${SEDER_APP_ICON_PATH}")
+    configure_file(app.rc.in app.rc)
+    list(APPEND SEDER_APP_PLATFORM_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
 endif()
 
 qt_add_executable(seder-video-rewrap
