@@ -3,6 +3,7 @@ use crate::media_core::video_rewrap::{
     ffprobe_keyframe_command, ffprobe_metadata_command, format_ms, nearest_keyframe,
     parse_ffprobe_keyframes, parse_ffprobe_metadata, parse_timecode_to_ms, rewrap_report_csv,
     rewrap_report_txt, temp_segment_path, validate_segments, RewrapProject, RewrapSegment,
+    CURRENT_PROJECT_VERSION,
 };
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
@@ -129,16 +130,19 @@ pub extern "C" fn svr_ffplay_preview_command(source: *const c_char, start_ms: i6
 pub extern "C" fn svr_ffmpeg_segment_command(
     source: *const c_char,
     segment_json: *const c_char,
+    keyframes_json: *const c_char,
     output: *const c_char,
 ) -> *mut c_char {
     response((|| {
         let source = input(source, "source")?;
         let output = input(output, "output")?;
         let segment_json = input(segment_json, "segment_json")?;
+        let keyframes_json = input(keyframes_json, "keyframes_json")?;
         let segment: RewrapSegment =
             serde_json::from_str(&segment_json).context("Invalid segment JSON")?;
+        let keyframes = parse_keyframes(&keyframes_json)?;
         Ok(json!({
-            "command": ffmpeg_segment_command(Path::new(&source), &segment, Path::new(&output)),
+            "command": ffmpeg_segment_command(Path::new(&source), &segment, &keyframes, Path::new(&output)),
         }))
     })())
 }
@@ -249,7 +253,7 @@ pub extern "C" fn svr_export_plan(
         let mut planned_segments = Vec::with_capacity(enabled.len());
         for (index, segment) in enabled.iter().enumerate() {
             let segment_path = temp_segment_path(&temp_root, index + 1, &extension);
-            let command = ffmpeg_segment_command(source, segment, &segment_path);
+            let command = ffmpeg_segment_command(source, segment, &keyframes, &segment_path);
             planned_segments.push(json!({
                 "segment": segment,
                 "path": path_string(&segment_path),
@@ -278,6 +282,7 @@ pub extern "C" fn svr_project_json(
         let output = input(output, "output")?;
         let segments_json = input(segments_json, "segments_json")?;
         let project = RewrapProject {
+            version: CURRENT_PROJECT_VERSION,
             source_file: source,
             output_file: output,
             segments: parse_segments(&segments_json)?,
@@ -370,6 +375,16 @@ mod tests {
             .unwrap()
             .iter()
             .any(|arg| arg == "/tmp/source.mov"));
+    }
+
+    #[test]
+    fn concat_escape_handles_single_quotes() {
+        // ffmpeg concat demuxer requires single-quote escaping inside
+        // single-quoted file paths: ' → '\''
+        let escaped = concat_escape(Path::new("it's.mov"));
+        assert_eq!(escaped, "it'\\''s.mov");
+        let listed = concat_list(&[std::path::PathBuf::from("it's.mov")]);
+        assert_eq!(listed, "file 'it'\\''s.mov'\n");
     }
 
     #[test]

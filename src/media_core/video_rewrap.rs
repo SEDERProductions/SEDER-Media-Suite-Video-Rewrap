@@ -17,18 +17,38 @@ pub struct VideoMetadata {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RewrapSegment {
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub in_ms: i64,
+    #[serde(default)]
     pub out_ms: i64,
+    #[serde(default)]
     pub notes: String,
+    #[serde(default = "enabled_default")]
     pub enabled: bool,
+}
+
+fn enabled_default() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RewrapProject {
+    #[serde(default = "project_version_default")]
+    pub version: u32,
+    #[serde(default)]
     pub source_file: String,
+    #[serde(default)]
     pub output_file: String,
+    #[serde(default)]
     pub segments: Vec<RewrapSegment>,
+}
+
+pub const CURRENT_PROJECT_VERSION: u32 = 1;
+
+fn project_version_default() -> u32 {
+    CURRENT_PROJECT_VERSION
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -152,6 +172,14 @@ pub fn total_enabled_duration(segments: &[RewrapSegment]) -> i64 {
         .sum()
 }
 
+pub const KEYFRAME_TOLERANCE_MS: i64 = 2;
+
+pub fn is_known_keyframe(keyframes: &[i64], ms: i64) -> bool {
+    keyframes
+        .iter()
+        .any(|candidate| (candidate - ms).abs() <= KEYFRAME_TOLERANCE_MS)
+}
+
 pub fn validate_segment(segment: &RewrapSegment, keyframes: &[i64]) -> Result<()> {
     if segment.in_ms >= segment.out_ms {
         anyhow::bail!(
@@ -159,13 +187,13 @@ pub fn validate_segment(segment: &RewrapSegment, keyframes: &[i64]) -> Result<()
             segment.name
         );
     }
-    if keyframes.binary_search(&segment.in_ms).is_err() {
+    if !is_known_keyframe(keyframes, segment.in_ms) {
         anyhow::bail!(
             "Segment '{}' in point is not a detected keyframe",
             segment.name
         );
     }
-    if keyframes.binary_search(&segment.out_ms).is_err() {
+    if !is_known_keyframe(keyframes, segment.out_ms) {
         anyhow::bail!(
             "Segment '{}' out point is not a detected keyframe",
             segment.name
@@ -220,25 +248,42 @@ pub fn ffprobe_metadata_command(source: &Path) -> ProcessCommand {
     }
 }
 
+fn snap_to_keyframe(keyframes: &[i64], ms: i64) -> i64 {
+    nearest_keyframe(keyframes, ms)
+        .map(|snap| snap.snapped_ms)
+        .unwrap_or(ms)
+}
+
 pub fn ffmpeg_segment_command(
     source: &Path,
     segment: &RewrapSegment,
+    keyframes: &[i64],
     output: &Path,
 ) -> ProcessCommand {
+    // Snap to the actual keyframe before passing to ffmpeg. With -ss before -i and
+    // -noaccurate_seek, ffmpeg fast-seeks to the keyframe at-or-before the requested
+    // timestamp; passing a value 1ms below a real keyframe would silently land on the
+    // previous keyframe. The validate step tolerates ±KEYFRAME_TOLERANCE_MS drift, so
+    // the seek value must be the matched keyframe, not the user-supplied input.
+    let in_ms = snap_to_keyframe(keyframes, segment.in_ms);
+    let out_ms = snap_to_keyframe(keyframes, segment.out_ms);
+    let duration_ms = (out_ms - in_ms).max(0);
     ProcessCommand {
         program: "ffmpeg".into(),
         args: vec![
             "-y".into(),
             "-ss".into(),
-            format_ms(segment.in_ms),
-            "-to".into(),
-            format_ms(segment.out_ms),
+            format_ms(in_ms),
+            "-noaccurate_seek".into(),
             "-i".into(),
             source.to_string_lossy().to_string(),
             "-map".into(),
             "0".into(),
             "-c".into(),
             "copy".into(),
+            "-t".into(),
+            format_ms(duration_ms),
+            "-copyts".into(),
             "-avoid_negative_ts".into(),
             "make_zero".into(),
             output.to_string_lossy().to_string(),

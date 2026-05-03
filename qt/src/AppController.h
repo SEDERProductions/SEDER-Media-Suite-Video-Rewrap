@@ -128,6 +128,7 @@ private:
     static QString bytesText(quint64 bytes);
     bool ensureCanExport();
     bool writeTextFile(const QString &path, const QString &contents);
+    void recheckToolsCached();
 
     SegmentTableModel *m_segments = nullptr;
     QString m_sourcePath;
@@ -155,4 +156,5 @@ private:
     QString m_theme = "system";
     bool m_darkMode = true;
     std::atomic_bool m_cancelExport = false;
+    qint64 m_lastToolCheckMs = 0;
 };

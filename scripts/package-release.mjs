@@ -108,6 +108,11 @@ function createMacBundle(executable, outputRoot) {
   if (existsSync(join(root, 'assets', 'icon.svg'))) {
     copyFileSync(join(root, 'assets', 'icon.svg'), join(resources, 'icon.svg'));
   }
+  const hasIcns = existsSync(join(root, 'assets', 'icon.icns'));
+  if (hasIcns) {
+    copyFileSync(join(root, 'assets', 'icon.icns'), join(resources, 'icon.icns'));
+  }
+  const iconKey = hasIcns ? '\n  <key>CFBundleIconFile</key>\n  <string>icon.icns</string>' : '';
   writeFileSync(join(contents, 'PkgInfo'), 'APPL????');
   writeFileSync(join(contents, 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -120,7 +125,7 @@ function createMacBundle(executable, outputRoot) {
   <key>CFBundleExecutable</key>
   <string>${app.packageName}</string>
   <key>CFBundleIdentifier</key>
-  <string>${app.bundleId}</string>
+  <string>${app.bundleId}</string>${iconKey}
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
@@ -140,6 +145,16 @@ function createMacBundle(executable, outputRoot) {
 `);
   const macdeployqt = ensureTool('macdeployqt', 'macdeployqt is required to package macOS Qt releases.');
   execFileSync(macdeployqt, [bundle], { stdio: 'inherit' });
+  execFileSync('codesign', [
+    '--force', '--deep', '--options', 'runtime',
+    '--identifier', app.bundleId,
+    '--sign', '-',
+    '--timestamp=none',
+    bundle,
+  ], { stdio: 'inherit' });
+  execFileSync('codesign', ['--verify', '--deep', '--strict', '--verbose=2', bundle], {
+    stdio: 'inherit',
+  });
   return bundle;
 }
 
@@ -152,7 +167,38 @@ function packageWindows(executable, outputRoot) {
   execFileSync(windeployqt, ['--release', '--qmldir', join(root, 'qt', 'qml'), join(stage, `${app.packageName}.exe`)], {
     stdio: 'inherit',
   });
+  signWindowsExecutables(stage);
   return stage;
+}
+
+function signWindowsExecutables(dir) {
+  // Read the staging directory from the SEDER_SIGN_DIR env var rather than
+  // string-interpolating it into the PS source. PowerShell single-quoted
+  // strings only escape apostrophes by doubling them; an apostrophe in the
+  // checkout path (legal on Windows) would close the literal early. Using an
+  // env var also avoids needing to escape backslashes.
+  const ps = `
+    $ErrorActionPreference = 'Stop'
+    $stageDir = $env:SEDER_SIGN_DIR
+    if (-not $stageDir) { throw 'SEDER_SIGN_DIR not set' }
+    $cert = New-SelfSignedCertificate \`
+      -Subject 'CN=SEDER Productions, O=SEDER Productions, C=GB' \`
+      -Type CodeSigningCert -KeyUsage DigitalSignature \`
+      -KeyAlgorithm RSA -KeyLength 2048 \`
+      -CertStoreLocation Cert:\\CurrentUser\\My \`
+      -NotAfter (Get-Date).AddYears(5)
+    $signtool = (Get-ChildItem "\${env:ProgramFiles(x86)}\\Windows Kits\\10\\bin" -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+      Where-Object { $_.FullName -match 'x64\\\\signtool.exe$' } | Select-Object -First 1).FullName
+    if (-not $signtool) { $signtool = 'signtool.exe' }
+    Get-ChildItem -LiteralPath $stageDir -Recurse -Filter *.exe | ForEach-Object {
+      & $signtool sign /fd SHA256 /sha1 $cert.Thumbprint /tr http://timestamp.digicert.com /td SHA256 $_.FullName
+      if ($LASTEXITCODE -ne 0) { throw "signtool failed for $($_.FullName)" }
+    }
+  `;
+  execFileSync('powershell', ['-NoProfile', '-Command', ps], {
+    stdio: 'inherit',
+    env: { ...process.env, SEDER_SIGN_DIR: dir },
+  });
 }
 
 function packageLinux(executable, outputRoot) {

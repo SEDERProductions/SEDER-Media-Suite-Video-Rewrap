@@ -4,7 +4,7 @@ SEDER Video Rewrap is a local-first desktop utility for building keyframe-aligne
 
 [Download the latest release](https://github.com/sederproductions/seder-video-rewrap/releases/latest)
 
-The first public builds are unsigned. macOS may require allowing the app in Privacy & Security, and Windows may show SmartScreen until code signing is added. Linux builds are published as an AppImage when the release runner can produce one, otherwise as a ZIP.
+Builds are ad-hoc signed by SEDER Productions for tamper-detection. macOS may still ask you to right-click → Open the first time, and Windows SmartScreen will show a "More info → Run anyway" prompt — Apple notarization and a paid Windows Authenticode certificate are not configured. Linux builds ship as an AppImage when the release runner can produce one, otherwise as a ZIP.
 
 ## Features
 
@@ -84,7 +84,7 @@ Release files are written to `release/`.
 
 Pushing a tag such as `v0.1.0` triggers GitHub Actions to build macOS, Windows, and Linux release assets using standard GitHub-hosted public-repo runners. The generated artifacts and SHA-256 checksum files are uploaded to the matching GitHub Release.
 
-GitHub Actions and GitHub Releases are expected to be free for this public repository when using standard runners. Apple notarization and Windows code signing are optional paid future steps.
+GitHub Actions and GitHub Releases are expected to be free for this public repository when using standard runners. Builds are ad-hoc signed by SEDER Productions; Apple notarization (paid Developer Program) and Windows Authenticode (paid certificate) are optional future steps.
 
 ## License
 

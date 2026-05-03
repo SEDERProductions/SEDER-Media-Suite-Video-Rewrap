@@ -120,6 +120,7 @@ fn generates_ffmpeg_commands_without_shell_strings() {
     let command = ffmpeg_segment_command(
         Path::new("/media/source.mov"),
         &segment,
+        &keys(),
         Path::new("/tmp/out.mov"),
     );
     assert_eq!(command.program, "ffmpeg");
@@ -148,6 +149,7 @@ fn saves_and_loads_project() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("project.seder-rewrap.json");
     let project = RewrapProject {
+        version: CURRENT_PROJECT_VERSION,
         source_file: "source.mov".into(),
         output_file: "out.mov".into(),
         segments: vec![RewrapSegment {
@@ -160,4 +162,113 @@ fn saves_and_loads_project() {
     };
     save_project(&path, &project).unwrap();
     assert_eq!(load_project(&path).unwrap(), project);
+}
+
+#[test]
+fn keyframe_validation_tolerates_2ms_drift() {
+    // Real keyframes from ffprobe round-tripped through f64 → i64 ms.
+    let keyframes = vec![0_i64, 1_000, 2_001];
+    // User snapped via UI; due to FP rounding the segment landed 1ms away.
+    let segment = RewrapSegment {
+        name: "Drifted".into(),
+        in_ms: 999,
+        out_ms: 2_000,
+        notes: String::new(),
+        enabled: true,
+    };
+    assert!(validate_segment(&segment, &keyframes).is_ok());
+}
+
+#[test]
+fn keyframe_validation_rejects_off_by_more_than_tolerance() {
+    let keyframes = vec![0_i64, 1_000, 2_001];
+    let segment = RewrapSegment {
+        name: "Off".into(),
+        in_ms: 996, // 4ms from 1000 — outside the 2ms tolerance
+        out_ms: 2_001,
+        notes: String::new(),
+        enabled: true,
+    };
+    assert!(validate_segment(&segment, &keyframes).is_err());
+}
+
+#[test]
+fn ffmpeg_segment_args_use_duration_and_stable_seek() {
+    let segment = RewrapSegment {
+        name: "A".into(),
+        in_ms: 1_000,
+        out_ms: 2_500,
+        notes: String::new(),
+        enabled: true,
+    };
+    let cmd = ffmpeg_segment_command(
+        Path::new("/media/src.mov"),
+        &segment,
+        &keys(),
+        Path::new("/tmp/out.mov"),
+    );
+    let args = cmd.args.join(" ");
+    // -t (duration) replaces -to (end-time) for version-stable semantics.
+    assert!(cmd.args.contains(&"-t".to_string()));
+    assert!(!cmd.args.contains(&"-to".to_string()));
+    // Ad-hoc keyframe-only seek: don't decode unwanted frames.
+    assert!(cmd.args.contains(&"-noaccurate_seek".to_string()));
+    // Preserve source timestamps so the concat step lines up cleanly.
+    assert!(cmd.args.contains(&"-copyts".to_string()));
+    assert!(cmd.args.contains(&"-c".to_string()));
+    assert!(cmd.args.contains(&"copy".to_string()));
+    // Sanity-check the duration is computed (1500 ms = 00:00:01.500).
+    assert!(args.contains("00:00:01.500"));
+}
+
+#[test]
+fn project_loads_old_save_without_version_field() {
+    // A project saved by an older build (pre-F9) had no `version` field.
+    let legacy_json = r#"{
+        "source_file": "src.mov",
+        "output_file": "out.mov",
+        "segments": [
+            {"name": "A", "in_ms": 0, "out_ms": 1000, "notes": "", "enabled": true}
+        ]
+    }"#;
+    let project: RewrapProject = serde_json::from_str(legacy_json).unwrap();
+    assert_eq!(project.version, CURRENT_PROJECT_VERSION);
+    assert_eq!(project.source_file, "src.mov");
+    assert_eq!(project.segments.len(), 1);
+}
+
+#[test]
+fn ffmpeg_segment_snaps_drifted_input_to_actual_keyframes() {
+    // Real keyframes round-tripped through f64 → i64 ms.
+    let keyframes = vec![0_i64, 1_000, 2_001];
+    // User-supplied values 1ms below the real keyframes — within validation
+    // tolerance, but if passed verbatim to ffmpeg's -ss with -noaccurate_seek
+    // they would land on the *previous* keyframe and silently shift content.
+    let segment = RewrapSegment {
+        name: "Drifted".into(),
+        in_ms: 999,
+        out_ms: 2_000,
+        notes: String::new(),
+        enabled: true,
+    };
+    let cmd = ffmpeg_segment_command(
+        Path::new("/media/src.mov"),
+        &segment,
+        &keyframes,
+        Path::new("/tmp/out.mov"),
+    );
+    let args = cmd.args.join(" ");
+    // -ss should be 1.000 (snapped from 999), not 0.999, and duration should
+    // be 1.001 (2001 - 1000), not 1.001 from a wrong base.
+    assert!(args.contains("-ss 00:00:01.000"), "args: {}", args);
+    assert!(args.contains("-t 00:00:01.001"), "args: {}", args);
+    assert!(!args.contains("00:00:00.999"));
+}
+
+#[test]
+fn known_keyframe_helper_uses_tolerance() {
+    let keys = vec![0_i64, 1_000, 2_001];
+    assert!(is_known_keyframe(&keys, 1_002));
+    assert!(is_known_keyframe(&keys, 998));
+    assert!(!is_known_keyframe(&keys, 1_005));
 }

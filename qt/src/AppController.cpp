@@ -96,7 +96,22 @@ void AppController::recheckTools()
     m_ffmpegReady = programExists("ffmpeg");
     m_ffprobeReady = programExists("ffprobe");
     m_ffplayReady = programExists("ffplay");
+    m_lastToolCheckMs = QDateTime::currentMSecsSinceEpoch();
     emit toolsChanged();
+}
+
+// programExists() runs three blocking QProcess "-version" probes that can stack
+// to multiple seconds in pathological PATH/AV/Gatekeeper scenarios. The probes
+// run on the GUI thread (these are QML slot entry points), so a freshly-cached
+// result is reused for repeat clicks within a short window to avoid stacking.
+void AppController::recheckToolsCached()
+{
+    constexpr qint64 kToolCacheTtlMs = 5'000;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (m_lastToolCheckMs != 0 && now - m_lastToolCheckMs < kToolCacheTtlMs) {
+        return;
+    }
+    recheckTools();
 }
 
 void AppController::saveProject()
@@ -353,6 +368,7 @@ void AppController::nextKeyframe()
 
 void AppController::previewCurrent()
 {
+    recheckToolsCached();
     if (!m_ffplayReady) {
         setLogText(toolStatusText());
         return;
@@ -741,7 +757,11 @@ AppController::ProcessResult AppController::runCommand(const RustBridge::Command
         return result;
     }
 
+    QByteArray stdoutBuf;
+    QByteArray stderrBuf;
     while (!process.waitForFinished(100)) {
+        stdoutBuf += process.readAllStandardOutput();
+        stderrBuf += process.readAllStandardError();
         if (cancel && *cancel) {
             process.kill();
             process.waitForFinished();
@@ -749,9 +769,11 @@ AppController::ProcessResult AppController::runCommand(const RustBridge::Command
             return result;
         }
     }
+    stdoutBuf += process.readAllStandardOutput();
+    stderrBuf += process.readAllStandardError();
 
-    result.stdoutText = QString::fromUtf8(process.readAllStandardOutput());
-    result.stderrText = QString::fromUtf8(process.readAllStandardError()).trimmed();
+    result.stdoutText = QString::fromUtf8(stdoutBuf);
+    result.stderrText = QString::fromUtf8(stderrBuf).trimmed();
     result.exitCode = process.exitCode();
     result.ok = process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
     if (!result.ok && result.stderrText.isEmpty()) {
@@ -781,6 +803,7 @@ bool AppController::ensureCanExport()
         setLogText("Another operation is already running.");
         return false;
     }
+    recheckToolsCached();
     if (!m_ffmpegReady || !m_ffprobeReady) {
         setLogText(toolStatusText());
         return false;

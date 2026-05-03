@@ -9,7 +9,7 @@ char *svr_format_timecode(long long milliseconds);
 char *svr_ffprobe_metadata_command(const char *source);
 char *svr_ffprobe_keyframe_command(const char *source);
 char *svr_ffplay_preview_command(const char *source, long long start_ms);
-char *svr_ffmpeg_segment_command(const char *source, const char *segment_json, const char *output);
+char *svr_ffmpeg_segment_command(const char *source, const char *segment_json, const char *keyframes_json, const char *output);
 char *svr_ffmpeg_concat_command(const char *list_file, const char *output);
 char *svr_parse_probe_result(
     const char *source,
