@@ -137,10 +137,10 @@ pub fn parse_ffprobe_metadata(output: &str, source: &Path, file_size: u64) -> Vi
             "width" => metadata.width = value.parse::<u32>().ok(),
             "height" => metadata.height = value.parse::<u32>().ok(),
             "codec_name" => metadata.codec = Some(value.to_string()),
-            "avg_frame_rate" | "r_frame_rate" if metadata.frame_rate.is_none() => {
-                if value != "0/0" {
-                    metadata.frame_rate = Some(value.to_string());
-                }
+            "avg_frame_rate" | "r_frame_rate"
+                if metadata.frame_rate.is_none() && value != "0/0" =>
+            {
+                metadata.frame_rate = Some(value.to_string());
             }
             _ => {}
         }
