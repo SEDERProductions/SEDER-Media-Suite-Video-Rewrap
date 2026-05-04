@@ -92,7 +92,18 @@ function configureAndBuild() {
 }
 
 function builtExecutable(info) {
-  return join(root, 'qt', 'build', 'release', 'bin', `${app.packageName}${info.executableExt}`);
+  const base = join(root, 'qt', 'build', 'release', 'bin');
+  // Visual Studio multi-config generators place Release binaries in a Release/
+  // subdirectory on Windows, while Ninja/Make place them directly in bin/.
+  const releaseSub = join(base, 'Release');
+  const candidates = [
+    join(releaseSub, `${app.packageName}${info.executableExt}`),
+    join(base, `${app.packageName}${info.executableExt}`),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return candidates[0]; // fallback to original path for a clear error message
 }
 
 function createMacBundle(executable, outputRoot) {
