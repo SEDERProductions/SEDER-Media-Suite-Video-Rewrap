@@ -28,9 +28,10 @@ set(SEDER_APP_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../assets/icon.ico")
 # bundle-free avoids two divergent bundle layouts for one binary.
 set(SEDER_APP_PLATFORM_SOURCES "")
 if(WIN32 AND EXISTS "${SEDER_APP_ICON_PATH}")
-    # RC.exe requires Windows-style backslashes in the ICON path.
-    file(TO_NATIVE_PATH "${SEDER_APP_ICON_PATH}" SEDER_APP_ICON_NATIVE_PATH)
-    set(SEDER_ICON_PATH "${SEDER_APP_ICON_NATIVE_PATH}")
+    # Copy the icon next to the generated app.rc so RC.exe sees a simple
+    # relative path without any forward/backslash translation issues.
+    file(COPY "${SEDER_APP_ICON_PATH}" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+    set(SEDER_ICON_PATH "icon.ico")
     configure_file(app.rc.in app.rc)
     list(APPEND SEDER_APP_PLATFORM_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
 endif()
