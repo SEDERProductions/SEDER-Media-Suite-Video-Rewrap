@@ -173,12 +173,18 @@ function packageWindows(executable, outputRoot) {
   const stage = join(outputRoot, `${app.packageName}-v${version}-windows-${platformInfo().architecture}`);
   rmSync(stage, { recursive: true, force: true });
   mkdirSync(stage, { recursive: true });
+  console.log(`[package] Copying executable to ${stage}`);
   copyFileSync(executable, join(stage, `${app.packageName}.exe`));
   const windeployqt = ensureTool('windeployqt', 'windeployqt is required to package Windows Qt releases.');
+  console.log(`[package] Running windeployqt: ${windeployqt}`);
   execFileSync(windeployqt, ['--release', '--qmldir', join(root, 'qt', 'qml'), join(stage, `${app.packageName}.exe`)], {
     stdio: 'inherit',
   });
-  signWindowsExecutables(stage);
+  try {
+    signWindowsExecutables(stage);
+  } catch (err) {
+    console.warn(`[package] Code signing failed (non-fatal): ${err.message}`);
+  }
   return stage;
 }
 
@@ -234,21 +240,32 @@ Categories=AudioVideo;Video;
 
   const linuxdeploy = findTool('linuxdeploy-x86_64.AppImage') || findTool('linuxdeploy');
   if (linuxdeploy) {
+    console.log(`[package] Found linuxdeploy: ${linuxdeploy}`);
     chmodSync(linuxdeploy, 0o755);
-    execFileSync(linuxdeploy, [
+    const args = [
+      '--appimage-extract-and-run',
       '--appdir', appDir,
       '--plugin', 'qt',
       '--output', 'appimage',
-    ], {
-      cwd: outputRoot,
-      env: {
-        ...process.env,
-        OUTPUT: join(outputRoot, `${app.packageName}-v${version}-${info.platform}-${info.architecture}.AppImage`),
-      },
-      stdio: 'inherit',
-    });
+    ];
+    console.log(`[package] Running linuxdeploy with args: ${args.join(' ')}`);
+    try {
+      execFileSync(linuxdeploy, args, {
+        cwd: outputRoot,
+        env: {
+          ...process.env,
+          OUTPUT: join(outputRoot, `${app.packageName}-v${version}-${info.platform}-${info.architecture}.AppImage`),
+        },
+        stdio: 'inherit',
+      });
+    } catch (err) {
+      console.warn(`[package] linuxdeploy failed, falling back to plain archive: ${err.message}`);
+    }
     const appImage = join(outputRoot, `${app.packageName}-v${version}-${info.platform}-${info.architecture}.AppImage`);
     if (existsSync(appImage)) return appImage;
+    console.log('[package] AppImage not created, falling back to plain archive');
+  } else {
+    console.log('[package] linuxdeploy not found, creating plain archive');
   }
 
   return appDir;
@@ -256,7 +273,9 @@ Categories=AudioVideo;Video;
 
 function packageRelease() {
   const info = platformInfo();
+  console.log(`[package] Platform: ${info.platform}, Arch: ${info.architecture}`);
   const executable = builtExecutable(info);
+  console.log(`[package] Executable path: ${executable}`);
   if (!existsSync(executable)) throw new Error(`Missing built executable: ${executable}`);
   rmSync(releaseDir, { recursive: true, force: true });
   mkdirSync(releaseDir, { recursive: true });
@@ -292,5 +311,7 @@ function packageRelease() {
   console.log(`SHA-256 ${checksum}`);
 }
 
+console.log('[package] Starting configure and build...');
 configureAndBuild();
+console.log('[package] Starting package release...');
 packageRelease();
