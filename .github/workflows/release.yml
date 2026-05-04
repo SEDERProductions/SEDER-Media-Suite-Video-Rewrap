@@ -19,7 +19,7 @@ jobs:
   tag:
     name: Tag version bump
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, 'chore: bump version to')
+    if: "github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, 'chore: bump version to')"
     outputs:
       release_tag: ${{ steps.bump.outputs.release_tag }}
     steps:
