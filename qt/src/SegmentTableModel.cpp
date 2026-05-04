@@ -3,6 +3,7 @@
 #include "RustBridge.h"
 
 #include <QJsonObject>
+#include <algorithm>
 
 SegmentTableModel::SegmentTableModel(QObject *parent)
     : QAbstractTableModel(parent)
