@@ -422,8 +422,8 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 CommandButton { text: "Enable"; enabled: app.selectedRow >= 0; onClicked: app.toggleSegment(app.selectedRow, true) }
                                 CommandButton { text: "Disable"; enabled: app.selectedRow >= 0; onClicked: app.toggleSegment(app.selectedRow, false) }
-                                CommandButton { text: "Up"; enabled: app.selectedRow >= 0; onClicked: app.moveSegmentUp(app.selectedRow) }
-                                CommandButton { text: "Down"; enabled: app.selectedRow >= 0; onClicked: app.moveSegmentDown(app.selectedRow) }
+                                CommandButton { text: "Up"; enabled: app.selectedRow > 0; onClicked: app.moveSegmentUp(app.selectedRow) }
+                                CommandButton { text: "Down"; enabled: app.selectedRow >= 0 && app.selectedRow + 1 < segmentModel.rowCount(); onClicked: app.moveSegmentDown(app.selectedRow) }
                                 CommandButton { text: "Duplicate"; enabled: app.selectedRow >= 0; onClicked: app.duplicateSegment(app.selectedRow) }
                                 CommandButton { text: "Delete"; enabled: app.selectedRow >= 0; onClicked: app.removeSegment(app.selectedRow) }
                                 Item { Layout.fillWidth: true }

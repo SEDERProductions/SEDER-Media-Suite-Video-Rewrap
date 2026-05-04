@@ -27,8 +27,7 @@ AppController::AppController(SegmentTableModel *segments, QObject *parent)
             setTheme("system");
         }
     });
-    recheckTools();
-    setLogText(toolStatusText());
+    recheckToolsBackground();
 }
 
 SegmentTableModel *AppController::segmentModel() const { return m_segments; }
@@ -112,6 +111,26 @@ void AppController::recheckToolsCached()
         return;
     }
     recheckTools();
+}
+
+void AppController::recheckToolsBackground()
+{
+    QThread *worker = QThread::create([this] {
+        const bool ffmpegOk = programExists("ffmpeg");
+        const bool ffprobeOk = programExists("ffprobe");
+        const bool ffplayOk = programExists("ffplay");
+        const qint64 timestamp = QDateTime::currentMSecsSinceEpoch();
+        QMetaObject::invokeMethod(this, [this, ffmpegOk, ffprobeOk, ffplayOk, timestamp] {
+            m_ffmpegReady = ffmpegOk;
+            m_ffprobeReady = ffprobeOk;
+            m_ffplayReady = ffplayOk;
+            m_lastToolCheckMs = timestamp;
+            emit toolsChanged();
+            setLogText(toolStatusText());
+        }, Qt::QueuedConnection);
+    });
+    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+    worker->start();
 }
 
 void AppController::saveProject()
@@ -551,7 +570,7 @@ void AppController::setBusy(bool busy)
 void AppController::setProgress(double progress)
 {
     const double clamped = std::clamp(progress, 0.0, 1.0);
-    if (qFuzzyCompare(m_progress, clamped)) {
+    if (m_progress == clamped) {
         return;
     }
     m_progress = clamped;

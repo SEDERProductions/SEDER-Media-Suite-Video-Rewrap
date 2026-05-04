@@ -129,6 +129,7 @@ private:
     bool ensureCanExport();
     bool writeTextFile(const QString &path, const QString &contents);
     void recheckToolsCached();
+    void recheckToolsBackground();
 
     SegmentTableModel *m_segments = nullptr;
     QString m_sourcePath;

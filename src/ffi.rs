@@ -175,7 +175,7 @@ pub extern "C" fn svr_parse_probe_result(
         let metadata = parse_ffprobe_metadata(&metadata_output, Path::new(&source), file_size);
         let keyframes = parse_ffprobe_keyframes(&keyframe_output);
         if keyframes.is_empty() {
-            anyhow::bail!("No keyframes were detected in this file.");
+            anyhow::bail!("No video keyframes were detected. The file may not contain a video stream or uses an unsupported format.");
         }
         Ok(json!({
             "metadata": metadata,
@@ -248,7 +248,7 @@ pub extern "C" fn svr_export_plan(
         let source = Path::new(&source);
         let output = Path::new(&output);
         let temp_root = PathBuf::from(temp_root);
-        let extension = output_extension(output);
+        let extension = output_extension(source);
         let mut segment_paths = Vec::with_capacity(enabled.len());
         let mut planned_segments = Vec::with_capacity(enabled.len());
         for (index, segment) in enabled.iter().enumerate() {
