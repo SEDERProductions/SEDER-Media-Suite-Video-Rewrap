@@ -2,7 +2,7 @@
 
 SEDER Video Rewrap is a local-first desktop utility for building keyframe-aligned video segments and exporting them with FFmpeg stream copy. It is designed for post-production workflows where rewrapping should avoid re-encoding.
 
-[Download the latest release](https://github.com/sederproductions/seder-video-rewrap/releases/latest)
+[Download the latest release](https://github.com/SEDERProductions/SEDER-Media-Suite-Video-Rewrap/releases/latest)
 
 Builds are ad-hoc signed by SEDER Productions for tamper-detection. macOS may still ask you to right-click → Open the first time, and Windows SmartScreen will show a "More info → Run anyway" prompt — Apple notarization and a paid Windows Authenticode certificate are not configured. Linux builds ship as an AppImage when the release runner can produce one, otherwise as a ZIP.
 
