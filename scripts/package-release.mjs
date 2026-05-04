@@ -17,7 +17,8 @@ import { execFileSync } from 'node:child_process';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const releaseDir = join(root, 'release');
 const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-const version = (process.env.GITHUB_REF_NAME || packageJson.version).replace(/^v/, '');
+const ref = process.env.GITHUB_REF_NAME || '';
+const version = (/^v\d/.test(ref) ? ref : packageJson.version).replace(/^v/, '');
 const app = {
   packageName: 'seder-video-rewrap',
   appName: 'SEDER Media Suite Video Rewrap',
@@ -297,6 +298,7 @@ function packageRelease() {
     distributable = packageLinux(executable, workDir);
     if (distributable.endsWith('.AppImage')) {
       finalPath = join(releaseDir, basename(distributable));
+      copyFileSync(distributable, finalPath);
     } else {
       finalPath = join(releaseDir, `${app.packageName}-v${version}-${info.platform}-${info.architecture}.zip`);
       archiveDirectory(distributable, finalPath);
