@@ -28,6 +28,9 @@ set(SEDER_APP_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../assets/icon.ico")
 # bundle-free avoids two divergent bundle layouts for one binary.
 set(SEDER_APP_PLATFORM_SOURCES "")
 if(WIN32 AND EXISTS "${SEDER_APP_ICON_PATH}")
+    # RC.exe requires Windows-style backslashes in the ICON path.
+    file(TO_NATIVE_PATH "${SEDER_APP_ICON_PATH}" SEDER_APP_ICON_NATIVE_PATH)
+    set(SEDER_ICON_PATH "${SEDER_APP_ICON_NATIVE_PATH}")
     configure_file(app.rc.in app.rc)
     list(APPEND SEDER_APP_PLATFORM_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
 endif()
@@ -56,6 +59,14 @@ target_link_libraries(seder-video-rewrap PRIVATE
     Qt6::Widgets
     ${RUST_CORE_LIBRARY}
 )
+
+if(WIN32)
+    # Rust static libraries on MSVC depend on Windows system libs that rustc
+    # auto-injects for executables but not for staticlib consumers.
+    target_link_libraries(seder-video-rewrap PRIVATE
+        ntdll ws2_32 userenv bcrypt
+    )
+endif()
 
 if(APPLE)
     target_link_libraries(seder-video-rewrap PRIVATE
@@ -91,5 +102,11 @@ target_link_libraries(segment-model-tests PRIVATE
     Qt6::Test
     ${RUST_CORE_LIBRARY}
 )
+
+if(WIN32)
+    target_link_libraries(segment-model-tests PRIVATE
+        ntdll ws2_32 userenv bcrypt
+    )
+endif()
 
 add_test(NAME segment-model-tests COMMAND segment-model-tests)
