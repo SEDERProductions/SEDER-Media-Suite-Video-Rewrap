@@ -111,3 +111,40 @@ if(WIN32)
 endif()
 
 add_test(NAME segment-model-tests COMMAND segment-model-tests)
+
+qt_add_executable(app-controller-tests
+    tests/AppControllerTests.cpp
+    src/AppController.cpp
+    src/RustBridge.cpp
+    src/SegmentTableModel.cpp
+)
+
+add_dependencies(app-controller-tests seder_video_rewrap_core)
+
+target_include_directories(app-controller-tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(app-controller-tests PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
+    Qt6::Test
+    ${RUST_CORE_LIBRARY}
+)
+
+if(WIN32)
+    target_link_libraries(app-controller-tests PRIVATE
+        ntdll ws2_32 userenv bcrypt
+    )
+endif()
+
+if(APPLE)
+    target_link_libraries(app-controller-tests PRIVATE
+        "-framework Security"
+        "-framework SystemConfiguration"
+    )
+endif()
+
+add_test(NAME app-controller-tests COMMAND app-controller-tests)

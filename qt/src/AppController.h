@@ -140,7 +140,7 @@ private:
         const QString &payloadKey,
         const QString &cancelLog,
         const QString &successLog);
-    void recheckToolsCached();
+    void recheckToolsCached(bool force = false);
     void recheckToolsBackground();
 
     SegmentTableModel *m_segments = nullptr;

@@ -105,9 +105,13 @@ void AppController::recheckTools()
 // to multiple seconds in pathological PATH/AV/Gatekeeper scenarios. The probes
 // run on the GUI thread (these are QML slot entry points), so a freshly-cached
 // result is reused for repeat clicks within a short window to avoid stacking.
-void AppController::recheckToolsCached()
+void AppController::recheckToolsCached(bool force)
 {
     constexpr qint64 kToolCacheTtlMs = 5'000;
+    if (force) {
+        recheckTools();
+        return;
+    }
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (m_lastToolCheckMs != 0 && now - m_lastToolCheckMs < kToolCacheTtlMs) {
         return;
@@ -781,7 +785,7 @@ QString AppController::toolStatusText() const
     if (missing.isEmpty()) {
         return "FFmpeg, FFprobe, and FFplay detected.";
     }
-    return QStringLiteral("Missing %1. Install FFmpeg from ffmpeg.org or with Homebrew: brew install ffmpeg.")
+    return QStringLiteral("Missing required binaries: %1. Install FFmpeg from ffmpeg.org or with Homebrew: brew install ffmpeg.")
         .arg(missing.join(", "));
 }
 
@@ -878,7 +882,7 @@ bool AppController::ensureCanExport()
         setLogText("Another operation is already running.");
         return false;
     }
-    recheckToolsCached();
+    recheckToolsCached(true);
     if (!m_ffmpegReady || !m_ffprobeReady) {
         setLogText(toolStatusText());
         return false;
