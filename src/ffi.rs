@@ -1,9 +1,9 @@
 use crate::media_core::video_rewrap::{
     ffmpeg_concat_command, ffmpeg_segment_command, ffplay_preview_command,
     ffprobe_keyframe_command, ffprobe_metadata_command, format_ms, nearest_keyframe,
-    parse_ffprobe_keyframes, parse_ffprobe_metadata, parse_timecode_to_ms, rewrap_report_csv,
-    rewrap_report_txt, temp_segment_path, validate_segments, RewrapProject, RewrapSegment,
-    CURRENT_PROJECT_VERSION,
+    parse_ffprobe_keyframes, parse_ffprobe_metadata, parse_timecode_to_ms, rewrap_preflight,
+    rewrap_report_csv, rewrap_report_txt, temp_segment_path, validate_segments, RewrapProject,
+    RewrapSegment, VideoMetadata, CURRENT_PROJECT_VERSION,
 };
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
@@ -221,6 +221,27 @@ pub extern "C" fn svr_validate_segments(
 }
 
 #[no_mangle]
+pub extern "C" fn svr_rewrap_preflight(
+    metadata_json: *const c_char,
+    output: *const c_char,
+    segments_json: *const c_char,
+    keyframes_json: *const c_char,
+) -> *mut c_char {
+    response((|| {
+        let metadata_json = input(metadata_json, "metadata_json")?;
+        let output = input(output, "output")?;
+        let segments_json = input(segments_json, "segments_json")?;
+        let keyframes_json = input(keyframes_json, "keyframes_json")?;
+        let metadata: VideoMetadata =
+            serde_json::from_str(&metadata_json).context("Invalid metadata JSON")?;
+        let segments = parse_segments(&segments_json)?;
+        let keyframes = parse_keyframes(&keyframes_json)?;
+        let preflight = rewrap_preflight(&metadata, &segments, &keyframes, Path::new(&output))?;
+        Ok(json!({ "preflight": preflight }))
+    })())
+}
+
+#[no_mangle]
 pub extern "C" fn svr_export_plan(
     source: *const c_char,
     output: *const c_char,
@@ -385,6 +406,27 @@ mod tests {
         assert_eq!(escaped, "it'\\''s.mov");
         let listed = concat_list(&[std::path::PathBuf::from("it's.mov")]);
         assert_eq!(listed, "file 'it'\\''s.mov'\n");
+    }
+
+    #[test]
+    fn ffi_rewrap_preflight_reports_container_mismatch() {
+        let metadata = CString::new(r#"{"filename":"src.mov","duration_ms":1000,"container":"mov,mp4,m4a,3gp,3g2,mj2","width":1920,"height":1080,"codec":"h264","frame_rate":"30/1","file_size":1}"#).unwrap();
+        let output = CString::new("/tmp/out.mkv").unwrap();
+        let segments =
+            CString::new(r#"[{"name":"A","in_ms":0,"out_ms":1000,"notes":"","enabled":true}]"#)
+                .unwrap();
+        let keyframes = CString::new("[0,1000]").unwrap();
+        let parsed = call(svr_rewrap_preflight(
+            metadata.as_ptr(),
+            output.as_ptr(),
+            segments.as_ptr(),
+            keyframes.as_ptr(),
+        ));
+        assert_eq!(parsed["ok"], false);
+        assert!(parsed["error"]
+            .as_str()
+            .unwrap()
+            .contains("No re-encode fallback is available"));
     }
 
     #[test]

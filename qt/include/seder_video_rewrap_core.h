@@ -18,6 +18,7 @@ char *svr_parse_probe_result(
     const char *keyframe_output);
 char *svr_nearest_keyframe(const char *keyframes_json, long long requested_ms);
 char *svr_validate_segments(const char *segments_json, const char *keyframes_json);
+char *svr_rewrap_preflight(const char *metadata_json, const char *output, const char *segments_json, const char *keyframes_json);
 char *svr_export_plan(
     const char *source,
     const char *output,

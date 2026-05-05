@@ -64,6 +64,81 @@ pub struct ProcessCommand {
     pub args: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RewrapPreflight {
+    pub container_extension: String,
+    pub container_match: bool,
+    pub enabled_segment_count: usize,
+    pub no_reencode_fallback: bool,
+    pub guidance: Vec<String>,
+}
+
+fn container_extension_from_path(output: &Path) -> String {
+    output
+        .extension()
+        .and_then(|v| v.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+}
+
+fn container_family_for_extension(ext: &str) -> Option<&'static str> {
+    match ext {
+        "mov" => Some("mov"),
+        "mp4" | "m4v" => Some("mp4"),
+        "mkv" => Some("matroska"),
+        _ => None,
+    }
+}
+
+fn metadata_has_family(container: Option<&str>, family: &str) -> bool {
+    let Some(container) = container else {
+        return false;
+    };
+    container
+        .split(',')
+        .any(|c| c.trim().eq_ignore_ascii_case(family))
+}
+
+pub fn rewrap_preflight(
+    metadata: &VideoMetadata,
+    segments: &[RewrapSegment],
+    keyframes: &[i64],
+    output: &Path,
+) -> Result<RewrapPreflight> {
+    validate_segments(segments, keyframes)?;
+    let enabled_segment_count = segments.iter().filter(|s| s.enabled).count();
+    if enabled_segment_count == 0 {
+        anyhow::bail!("No enabled segments to export. Enable at least one segment.");
+    }
+
+    let ext = container_extension_from_path(output);
+    let family = container_family_for_extension(&ext).with_context(|| {
+        format!("Output container '.{}' is not supported for stream-copy rewrap. Use .mov, .mp4/.m4v, or .mkv.", ext)
+    })?;
+
+    if !metadata_has_family(metadata.container.as_deref(), family) {
+        anyhow::bail!(
+            "Preflight failed: source container '{}' does not advertise {} compatibility for stream-copy output '.{}'. No re-encode fallback is available. Adjust container choice, stream layout, or source normalization before exporting.",
+            metadata.container.clone().unwrap_or_else(|| "unknown".into()),
+            family,
+            ext
+        );
+    }
+
+    Ok(RewrapPreflight {
+        container_extension: ext,
+        container_match: true,
+        enabled_segment_count,
+        no_reencode_fallback: true,
+        guidance: vec![
+            "No re-encode fallback is available in this export path.".into(),
+            "Adjust container choice (mov/mp4/m4v/mkv) so it matches the source container family.".into(),
+            "Adjust stream layout (for example remove unsupported attachments/data streams for target container).".into(),
+            "Normalize the source with an explicit transcode/remux pass before using segment rewrap.".into(),
+        ],
+    })
+}
+
 pub fn parse_timecode_to_ms(value: &str) -> Result<i64> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
