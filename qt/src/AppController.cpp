@@ -135,24 +135,47 @@ void AppController::recheckToolsBackground()
 
 void AppController::saveProject()
 {
+    runExportFlow(
+        "Save Rewrap Project",
+        "SEDER Rewrap Project (*.json);;All Files (*)",
+        "video-rewrap.seder-rewrap.json",
+        [this] { return RustBridge::projectJson(m_sourcePath, m_outputPath, m_segments->toJsonArray()); },
+        "projectJson",
+        "Project save cancelled.",
+        "Project saved");
+}
+
+bool AppController::runExportFlow(
+    const QString &dialogTitle,
+    const QString &dialogFilter,
+    const QString &defaultFilename,
+    const std::function<QJsonObject()> &bridgeCall,
+    const QString &payloadKey,
+    const QString &cancelLog,
+    const QString &successLog)
+{
     const QString path = QFileDialog::getSaveFileName(
         nullptr,
-        "Save Rewrap Project",
-        "video-rewrap.seder-rewrap.json",
-        "SEDER Rewrap Project (*.json);;All Files (*)");
+        dialogTitle,
+        defaultFilename,
+        dialogFilter);
     if (path.isEmpty()) {
-        setLogText("Project save cancelled.");
-        return;
+        setLogText(cancelLog);
+        return false;
     }
 
-    const QJsonObject reply = RustBridge::projectJson(m_sourcePath, m_outputPath, m_segments->toJsonArray());
+    const QJsonObject reply = bridgeCall();
     if (!reply.value("ok").toBool()) {
         setLogText(reply.value("error").toString());
-        return;
+        return false;
     }
-    if (writeTextFile(path, reply.value("projectJson").toString())) {
-        setLogText(QStringLiteral("Project saved: %1").arg(displayPath(path)));
+
+    if (!writeTextFile(path, reply.value(payloadKey).toString())) {
+        return false;
     }
+
+    setLogText(QStringLiteral("%1: %2").arg(successLog, displayPath(path)));
+    return true;
 }
 
 void AppController::loadProject()
@@ -195,46 +218,26 @@ void AppController::loadProject()
 
 void AppController::exportTxtReport()
 {
-    const QString path = QFileDialog::getSaveFileName(
-        nullptr,
+    runExportFlow(
         "Export TXT Report",
+        "Text Report (*.txt);;All Files (*)",
         "video-rewrap-report.txt",
-        "Text Report (*.txt);;All Files (*)");
-    if (path.isEmpty()) {
-        setLogText("TXT report export cancelled.");
-        return;
-    }
-
-    const QJsonObject reply = RustBridge::rewrapReportTxt(m_sourcePath, m_outputPath, m_segments->toJsonArray());
-    if (!reply.value("ok").toBool()) {
-        setLogText(reply.value("error").toString());
-        return;
-    }
-    if (writeTextFile(path, reply.value("report").toString())) {
-        setLogText(QStringLiteral("TXT report exported: %1").arg(displayPath(path)));
-    }
+        [this] { return RustBridge::rewrapReportTxt(m_sourcePath, m_outputPath, m_segments->toJsonArray()); },
+        "report",
+        "TXT report export cancelled.",
+        "TXT report exported");
 }
 
 void AppController::exportCsvReport()
 {
-    const QString path = QFileDialog::getSaveFileName(
-        nullptr,
+    runExportFlow(
         "Export CSV Report",
+        "CSV Report (*.csv);;All Files (*)",
         "video-rewrap-report.csv",
-        "CSV Report (*.csv);;All Files (*)");
-    if (path.isEmpty()) {
-        setLogText("CSV report export cancelled.");
-        return;
-    }
-
-    const QJsonObject reply = RustBridge::rewrapReportCsv(m_sourcePath, m_outputPath, m_segments->toJsonArray());
-    if (!reply.value("ok").toBool()) {
-        setLogText(reply.value("error").toString());
-        return;
-    }
-    if (writeTextFile(path, reply.value("report").toString())) {
-        setLogText(QStringLiteral("CSV report exported: %1").arg(displayPath(path)));
-    }
+        [this] { return RustBridge::rewrapReportCsv(m_sourcePath, m_outputPath, m_segments->toJsonArray()); },
+        "report",
+        "CSV report export cancelled.",
+        "CSV report exported");
 }
 
 void AppController::startExport()

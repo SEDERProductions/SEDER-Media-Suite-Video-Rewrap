@@ -7,6 +7,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <atomic>
+#include <functional>
 
 class AppController : public QObject
 {
@@ -128,6 +129,13 @@ private:
     static QString bytesText(quint64 bytes);
     bool ensureCanExport();
     bool writeTextFile(const QString &path, const QString &contents);
+    bool runExportFlow(const QString &dialogTitle,
+        const QString &dialogFilter,
+        const QString &defaultFilename,
+        const std::function<QJsonObject()> &bridgeCall,
+        const QString &payloadKey,
+        const QString &cancelLog,
+        const QString &successLog);
     void recheckToolsCached();
     void recheckToolsBackground();
 
