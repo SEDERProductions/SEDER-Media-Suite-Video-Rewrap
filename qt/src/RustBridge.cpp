@@ -177,15 +177,22 @@ QJsonObject RustBridge::exportPlan(
     const QString &output,
     const QString &tempRoot,
     const QJsonArray &segments,
-    const QJsonArray &keyframes)
+    const QJsonArray &keyframes,
+    const QString &exportMode)
 {
-    return invokeQStrQStrQStrJsonJson(
-        svr_export_plan,
-        source,
-        output,
-        tempRoot,
-        segments,
-        keyframes);
+    const QByteArray src = utf8(source);
+    const QByteArray out = utf8(output);
+    const QByteArray tmp = utf8(tempRoot);
+    const QByteArray s = jsonBytes(segments);
+    const QByteArray k = jsonBytes(keyframes);
+    const QByteArray m = utf8(exportMode);
+    return decode(svr_export_plan(
+        src.constData(),
+        out.constData(),
+        tmp.constData(),
+        s.constData(),
+        k.constData(),
+        m.constData()));
 }
 
 QJsonObject RustBridge::projectJson(
@@ -204,17 +211,27 @@ QJsonObject RustBridge::parseProjectJson(const QString &projectJson)
 QJsonObject RustBridge::rewrapReportTxt(
     const QString &source,
     const QString &output,
-    const QJsonArray &segments)
+    const QJsonArray &segments,
+    const QString &exportMode)
 {
-    return invokeQStrQStrJson(svr_rewrap_report_txt, source, output, segments);
+    const QByteArray src = utf8(source);
+    const QByteArray out = utf8(output);
+    const QByteArray s = jsonBytes(segments);
+    const QByteArray m = utf8(exportMode);
+    return decode(svr_rewrap_report_txt(src.constData(), out.constData(), s.constData(), m.constData()));
 }
 
 QJsonObject RustBridge::rewrapReportCsv(
     const QString &source,
     const QString &output,
-    const QJsonArray &segments)
+    const QJsonArray &segments,
+    const QString &exportMode)
 {
-    return invokeQStrQStrJson(svr_rewrap_report_csv, source, output, segments);
+    const QByteArray src = utf8(source);
+    const QByteArray out = utf8(output);
+    const QByteArray s = jsonBytes(segments);
+    const QByteArray m = utf8(exportMode);
+    return decode(svr_rewrap_report_csv(src.constData(), out.constData(), s.constData(), m.constData()));
 }
 
 RustBridge::Command RustBridge::commandFromJson(const QJsonObject &object)

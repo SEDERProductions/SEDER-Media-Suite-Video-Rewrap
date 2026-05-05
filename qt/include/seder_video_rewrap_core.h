@@ -24,11 +24,12 @@ char *svr_export_plan(
     const char *output,
     const char *temp_root,
     const char *segments_json,
-    const char *keyframes_json);
+    const char *keyframes_json,
+    const char *export_mode);
 char *svr_project_json(const char *source, const char *output, const char *segments_json);
 char *svr_parse_project_json(const char *project_json);
-char *svr_rewrap_report_txt(const char *source, const char *output, const char *segments_json);
-char *svr_rewrap_report_csv(const char *source, const char *output, const char *segments_json);
+char *svr_rewrap_report_txt(const char *source, const char *output, const char *segments_json, const char *export_mode);
+char *svr_rewrap_report_csv(const char *source, const char *output, const char *segments_json, const char *export_mode);
 void svr_free_string(char *ptr);
 
 #ifdef __cplusplus

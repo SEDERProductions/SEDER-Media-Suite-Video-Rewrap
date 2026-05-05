@@ -35,6 +35,7 @@ class AppController : public QObject
     Q_PROPERTY(int selectedRow READ selectedRow NOTIFY selectedRowChanged)
     Q_PROPERTY(QString theme READ theme WRITE setTheme NOTIFY themeChanged)
     Q_PROPERTY(bool darkMode READ darkMode NOTIFY themeChanged)
+    Q_PROPERTY(QString exportMode READ exportMode WRITE setExportMode NOTIFY exportModeChanged)
 
 public:
     explicit AppController(SegmentTableModel *segments, QObject *parent = nullptr);
@@ -62,6 +63,7 @@ public:
     int selectedRow() const;
     QString theme() const;
     bool darkMode() const;
+    QString exportMode() const;
 
     Q_INVOKABLE void openSource();
     Q_INVOKABLE void chooseOutput();
@@ -86,6 +88,7 @@ public:
     Q_INVOKABLE void moveSegmentDown(int row);
     Q_INVOKABLE void toggleSegment(int row, bool enabled);
     Q_INVOKABLE void setTheme(const QString &theme);
+    Q_INVOKABLE void setExportMode(const QString &mode);
 
 signals:
     void sourcePathChanged();
@@ -100,6 +103,7 @@ signals:
     void segmentsChanged();
     void selectedRowChanged();
     void themeChanged();
+    void exportModeChanged();
 
 private:
     struct ProcessResult {
@@ -164,6 +168,7 @@ private:
     QString m_totalDurationText = "00:00:00.000";
     int m_selectedRow = -1;
     QString m_theme = "system";
+    QString m_exportMode = "concat_single";
     bool m_darkMode = true;
     std::atomic_bool m_cancelExport = false;
     qint64 m_lastToolCheckMs = 0;

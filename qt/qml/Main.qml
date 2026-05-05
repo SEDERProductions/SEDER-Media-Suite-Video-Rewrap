@@ -283,8 +283,13 @@ ApplicationWindow {
                         CommandButton { text: "CSV Report"; Layout.fillWidth: true; onClicked: app.exportCsvReport() }
                     }
 
-                    MetaLabel { text: "04 / EXPORT VIDEO" }
-                    MetaLabel { text: "Tip: Export requires FFmpeg/FFprobe, a source video, and an output file path." }
+                    MetaLabel { text: "04 / EXPORT" }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        CommandButton { text: "Concat Single"; Layout.fillWidth: true; onClicked: app.setExportMode("concat_single") }
+                        CommandButton { text: "Separate Files"; Layout.fillWidth: true; onClicked: app.setExportMode("separate_files") }
+                    }
+                    PathLabel { text: "Mode: " + app.exportMode; Layout.fillWidth: true }
                     CommandButton {
                         text: app.busy ? "Exporting..." : "Start Export"
                         primary: true

@@ -34,7 +34,8 @@ public:
         const QString &output,
         const QString &tempRoot,
         const QJsonArray &segments,
-        const QJsonArray &keyframes);
+        const QJsonArray &keyframes,
+        const QString &exportMode);
     static QJsonObject projectJson(
         const QString &source,
         const QString &output,
@@ -43,11 +44,13 @@ public:
     static QJsonObject rewrapReportTxt(
         const QString &source,
         const QString &output,
-        const QJsonArray &segments);
+        const QJsonArray &segments,
+        const QString &exportMode);
     static QJsonObject rewrapReportCsv(
         const QString &source,
         const QString &output,
-        const QJsonArray &segments);
+        const QJsonArray &segments,
+        const QString &exportMode);
     static Command commandFromJson(const QJsonObject &object);
 
 private:

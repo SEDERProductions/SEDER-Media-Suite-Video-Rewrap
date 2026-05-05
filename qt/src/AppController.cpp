@@ -53,6 +53,7 @@ QString AppController::totalDurationText() const { return m_totalDurationText; }
 int AppController::selectedRow() const { return m_selectedRow; }
 QString AppController::theme() const { return m_theme; }
 bool AppController::darkMode() const { return m_darkMode; }
+QString AppController::exportMode() const { return m_exportMode; }
 
 void AppController::openSource()
 {
@@ -223,7 +224,7 @@ void AppController::exportTxtReport()
         "Export TXT Report",
         "Text Report (*.txt);;All Files (*)",
         "video-rewrap-report.txt",
-        [this] { return RustBridge::rewrapReportTxt(m_sourcePath, m_outputPath, m_segments->toJsonArray()); },
+        [this] { return RustBridge::rewrapReportTxt(m_sourcePath, m_outputPath, m_segments->toJsonArray(), m_exportMode); },
         "report",
         "TXT report export cancelled.",
         "TXT report exported");
@@ -235,7 +236,7 @@ void AppController::exportCsvReport()
         "Export CSV Report",
         "CSV Report (*.csv);;All Files (*)",
         "video-rewrap-report.csv",
-        [this] { return RustBridge::rewrapReportCsv(m_sourcePath, m_outputPath, m_segments->toJsonArray()); },
+        [this] { return RustBridge::rewrapReportCsv(m_sourcePath, m_outputPath, m_segments->toJsonArray(), m_exportMode); },
         "report",
         "CSV report export cancelled.",
         "CSV report exported");
@@ -262,7 +263,8 @@ void AppController::startExport()
         m_outputPath,
         tempRoot,
         m_segments->toJsonArray(),
-        keyframesJson());
+        keyframesJson(),
+        m_exportMode);
     if (!plan.value("ok").toBool()) {
         setLogText(plan.value("error").toString());
         return;
@@ -316,49 +318,51 @@ void AppController::startExport()
             }
         }
 
-        QFile listFile(plan.value("listPath").toString());
-        if (!listFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            const QString error = listFile.errorString();
-            QDir(tempRoot).removeRecursively();
-            QMetaObject::invokeMethod(this, [this, error] {
-                setBusy(false);
-                setProgress(0.0);
-                setLogText(QStringLiteral("Unable to write concat list: %1").arg(error));
-            }, Qt::QueuedConnection);
-            return;
-        }
-        const QByteArray listBytes = plan.value("listText").toString().toUtf8();
-        if (listFile.write(listBytes) != listBytes.size()) {
-            const QString error = listFile.errorString();
+        ProcessResult result{ true, "", "", 0 };
+        if (m_exportMode == "concat_single") {
+            QFile listFile(plan.value("listPath").toString());
+            if (!listFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                const QString error = listFile.errorString();
+                QDir(tempRoot).removeRecursively();
+                QMetaObject::invokeMethod(this, [this, error] {
+                    setBusy(false);
+                    setProgress(0.0);
+                    setLogText(QStringLiteral("Unable to write concat list: %1").arg(error));
+                }, Qt::QueuedConnection);
+                return;
+            }
+            const QByteArray listBytes = plan.value("listText").toString().toUtf8();
+            if (listFile.write(listBytes) != listBytes.size()) {
+                const QString error = listFile.errorString();
+                listFile.close();
+                QDir(tempRoot).removeRecursively();
+                QMetaObject::invokeMethod(this, [this, error] {
+                    setBusy(false);
+                    setProgress(0.0);
+                    setLogText(QStringLiteral("Unable to write concat list: %1").arg(error));
+                }, Qt::QueuedConnection);
+                return;
+            }
+            listFile.flush();
+            if (listFile.error() != QFileDevice::NoError) {
+                const QString error = listFile.errorString();
+                listFile.close();
+                QDir(tempRoot).removeRecursively();
+                QMetaObject::invokeMethod(this, [this, error] {
+                    setBusy(false);
+                    setProgress(0.0);
+                    setLogText(QStringLiteral("Unable to flush concat list: %1").arg(error));
+                }, Qt::QueuedConnection);
+                return;
+            }
             listFile.close();
-            QDir(tempRoot).removeRecursively();
-            QMetaObject::invokeMethod(this, [this, error] {
-                setBusy(false);
-                setProgress(0.0);
-                setLogText(QStringLiteral("Unable to write concat list: %1").arg(error));
+            QMetaObject::invokeMethod(this, [this] {
+                setProgress(0.9);
+                setLogText("Concatenating enabled segments...");
             }, Qt::QueuedConnection);
-            return;
+            const RustBridge::Command concat = RustBridge::commandFromJson(plan.value("concatCommand").toObject());
+            result = runCommand(concat, &m_cancelExport);
         }
-        listFile.flush();
-        if (listFile.error() != QFileDevice::NoError) {
-            const QString error = listFile.errorString();
-            listFile.close();
-            QDir(tempRoot).removeRecursively();
-            QMetaObject::invokeMethod(this, [this, error] {
-                setBusy(false);
-                setProgress(0.0);
-                setLogText(QStringLiteral("Unable to flush concat list: %1").arg(error));
-            }, Qt::QueuedConnection);
-            return;
-        }
-        listFile.close();
-
-        QMetaObject::invokeMethod(this, [this] {
-            setProgress(0.9);
-            setLogText("Concatenating enabled segments...");
-        }, Qt::QueuedConnection);
-        const RustBridge::Command concat = RustBridge::commandFromJson(plan.value("concatCommand").toObject());
-        const ProcessResult result = runCommand(concat, &m_cancelExport);
         QDir(tempRoot).removeRecursively();
 
         QMetaObject::invokeMethod(this, [this, result] {
@@ -571,6 +575,14 @@ void AppController::setTheme(const QString &theme)
     if (changed) {
         emit themeChanged();
     }
+}
+
+void AppController::setExportMode(const QString &mode)
+{
+    const QString normalized = mode == "separate_files" ? QStringLiteral("separate_files") : QStringLiteral("concat_single");
+    if (m_exportMode == normalized) return;
+    m_exportMode = normalized;
+    emit exportModeChanged();
 }
 
 void AppController::setSourcePath(const QString &path)

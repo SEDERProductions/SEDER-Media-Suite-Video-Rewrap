@@ -64,6 +64,28 @@ pub struct ProcessCommand {
     pub args: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportMode {
+    ConcatSingle,
+    SeparateFiles,
+}
+
+impl Default for ExportMode {
+    fn default() -> Self {
+        Self::ConcatSingle
+    }
+}
+
+impl ExportMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ConcatSingle => "concat single output",
+            Self::SeparateFiles => "separate files output",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RewrapPreflight {
     pub container_extension: String,
@@ -137,7 +159,6 @@ pub fn rewrap_preflight(
             "Normalize the source with an explicit transcode/remux pass before using segment rewrap.".into(),
         ],
     })
-}
 
 fn finite_non_negative_seconds(seconds: f64, field: &str) -> Result<f64> {
     if !seconds.is_finite() || seconds < 0.0 {
@@ -435,41 +456,82 @@ fn csv_cell(value: impl AsRef<str>) -> String {
     format!("\"{}\"", value.as_ref().replace('"', "\"\""))
 }
 
-pub fn rewrap_report_txt(source: &Path, output: &Path, segments: &[RewrapSegment]) -> String {
+fn output_extension(path: &Path) -> String {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("mov")
+        .to_string()
+}
+
+pub fn rewrap_report_txt(
+    source: &Path,
+    output: &Path,
+    segments: &[RewrapSegment],
+    export_mode: ExportMode,
+) -> String {
     let enabled = segments
         .iter()
         .filter(|segment| segment.enabled)
         .collect::<Vec<_>>();
     let mut report = format!(
-        "SEDER Media Suite Video Rewrap Report\nSource file: {}\nOutput file: {}\nExport mode: keyframe-aligned stream copy\nExport timestamp: {}\nTotal selected duration: {}\n\n",
+        "SEDER Media Suite Video Rewrap Report\nSource file: {}\nOutput file: {}\nExport mode: {}\nExport timestamp: {}\nTotal selected duration: {}\n\n",
         source.display(),
         output.display(),
+        export_mode.label(),
         current_timestamp(),
         format_ms(total_enabled_duration(segments))
     );
-    for segment in enabled {
+    for (index, segment) in enabled.iter().enumerate() {
+        let output_path = match export_mode {
+            ExportMode::ConcatSingle => output.display().to_string(),
+            ExportMode::SeparateFiles => {
+                temp_segment_path(output, index + 1, &output_extension(output))
+                    .display()
+                    .to_string()
+            }
+        };
         report.push_str(&format!(
-            "{}\nIn keyframe: {}\nOut keyframe: {}\nDuration: {}\nNotes: {}\n\n",
+            "{}\nIn keyframe: {}\nOut keyframe: {}\nDuration: {}\nOutput path: {}\nNotes: {}\n\n",
             segment.name,
             format_ms(segment.in_ms),
             format_ms(segment.out_ms),
             format_ms(segment_duration(segment)),
+            output_path,
             segment.notes
         ));
     }
     report
 }
 
-pub fn rewrap_report_csv(source: &Path, output: &Path, segments: &[RewrapSegment]) -> String {
-    let mut out = String::from("\"source_file\",\"output_file\",\"export_mode\",\"segment_name\",\"in_keyframe_time\",\"out_keyframe_time\",\"duration\",\"notes\",\"total_selected_duration\",\"export_timestamp\"\n");
+pub fn rewrap_report_csv(
+    source: &Path,
+    output: &Path,
+    segments: &[RewrapSegment],
+    export_mode: ExportMode,
+) -> String {
+    let mut out = String::from("\"source_file\",\"output_file\",\"export_mode\",\"segment_name\",\"segment_output_path\",\"in_keyframe_time\",\"out_keyframe_time\",\"duration\",\"notes\",\"total_selected_duration\",\"export_timestamp\"\n");
     let timestamp = current_timestamp();
     let total = format_ms(total_enabled_duration(segments));
-    for segment in segments.iter().filter(|segment| segment.enabled) {
+    for (index, segment) in segments
+        .iter()
+        .filter(|segment| segment.enabled)
+        .enumerate()
+    {
+        let segment_output_path = match export_mode {
+            ExportMode::ConcatSingle => output.display().to_string(),
+            ExportMode::SeparateFiles => {
+                temp_segment_path(output, index + 1, &output_extension(output))
+                    .display()
+                    .to_string()
+            }
+        };
         let row = [
             source.display().to_string(),
             output.display().to_string(),
-            "keyframe-aligned stream copy".to_string(),
+            export_mode.label().to_string(),
             segment.name.clone(),
+            segment_output_path,
             format_ms(segment.in_ms),
             format_ms(segment.out_ms),
             format_ms(segment_duration(segment)),

@@ -139,10 +139,22 @@ fn generates_ffmpeg_commands_without_shell_strings() {
 #[test]
 fn generates_reports() {
     let segments = vec![mk_segment_with_notes("Moment", 1_000, 2_500, "keeper")];
-    let txt = rewrap_report_txt(Path::new("source.mov"), Path::new("out.mov"), &segments);
-    let csv = rewrap_report_csv(Path::new("source.mov"), Path::new("out.mov"), &segments);
-    assert!(txt.contains("keyframe-aligned stream copy"));
+    let txt = rewrap_report_txt(
+        Path::new("source.mov"),
+        Path::new("out.mov"),
+        &segments,
+        ExportMode::ConcatSingle,
+    );
+    let csv = rewrap_report_csv(
+        Path::new("source.mov"),
+        Path::new("out.mov"),
+        &segments,
+        ExportMode::SeparateFiles,
+    );
+    assert!(txt.contains("concat single output"));
     assert!(csv.contains("Moment"));
+    assert!(csv.contains("segment_output_path"));
+    assert!(txt.contains("Output path:"));
 }
 
 #[test]
