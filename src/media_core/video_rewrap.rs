@@ -64,17 +64,12 @@ pub struct ProcessCommand {
     pub args: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportMode {
+    #[default]
     ConcatSingle,
     SeparateFiles,
-}
-
-impl Default for ExportMode {
-    fn default() -> Self {
-        Self::ConcatSingle
-    }
 }
 
 impl ExportMode {
