@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Accessibility
 
 ApplicationWindow {
     id: root
@@ -51,6 +52,9 @@ ApplicationWindow {
 
     component StatusPill: Rectangle {
         id: statusPill
+        Accessible.role: Accessible.StaticText
+        Accessible.name: text
+        Accessible.description: "Status indicator"
         property string text: ""
         property color tone: root.faint
         implicitHeight: 24
@@ -73,6 +77,11 @@ ApplicationWindow {
     component CommandButton: Button {
         id: commandButton
         property bool primary: false
+        property string accessibleDescription: ""
+        focusPolicy: Qt.StrongFocus
+        Accessible.role: Accessible.Button
+        Accessible.name: text
+        Accessible.description: accessibleDescription.length ? accessibleDescription : text
         implicitHeight: 34
         padding: 10
         font.pixelSize: 13
@@ -84,6 +93,8 @@ ApplicationWindow {
                 : Qt.rgba(root.faint.r, root.faint.g, root.faint.b, 0.18)
             border.color: commandButton.primary ? "transparent" : root.line
             border.width: commandButton.primary ? 0 : 1
+            border.color: commandButton.activeFocus ? root.accent : (commandButton.primary ? "transparent" : root.line)
+            border.width: commandButton.activeFocus ? 2 : (commandButton.primary ? 0 : 1)
         }
     }
 
@@ -110,7 +121,13 @@ ApplicationWindow {
     }
 
     component Field: TextField {
+        id: fieldControl
+        property string accessibleDescription: ""
         color: root.ink
+        focusPolicy: Qt.StrongFocus
+        Accessible.role: Accessible.EditableText
+        Accessible.name: placeholderText.length ? placeholderText : "Text field"
+        Accessible.description: accessibleDescription.length ? accessibleDescription : Accessible.name
         placeholderTextColor: root.faint
         selectedTextColor: "white"
         selectionColor: root.accent
@@ -118,10 +135,26 @@ ApplicationWindow {
         background: Rectangle {
             radius: 5
             color: root.dark ? "#181613" : "#fffaf0"
-            border.color: root.line
-            border.width: 1
+            border.color: fieldControl.activeFocus ? root.accent : root.line
+            border.width: fieldControl.activeFocus ? 2 : 1
         }
     }
+
+    Shortcut { sequence: StandardKey.Open; onActivated: app.openSource() }
+    Shortcut { sequence: "Ctrl+E"; onActivated: app.startExport() }
+    Shortcut { sequence: "I"; onActivated: app.setIn() }
+    Shortcut { sequence: "O"; onActivated: app.setOut() }
+    Shortcut { sequence: "Left"; onActivated: app.previousKeyframe() }
+    Shortcut { sequence: "Right"; onActivated: app.nextKeyframe() }
+    Shortcut {
+        sequence: "Ctrl+N"
+        onActivated: {
+            app.addSegment(segmentName.text, segmentNotes.text)
+            segmentName.text = ""
+            segmentNotes.text = ""
+        }
+    }
+    Shortcut { sequence: StandardKey.Delete; onActivated: if (app.selectedRow >= 0) app.removeSegment(app.selectedRow) }
 
     ColumnLayout {
         anchors.fill: parent
@@ -312,22 +345,24 @@ ApplicationWindow {
                             }
                             RowLayout {
                                 Layout.fillWidth: true
-                                CommandButton { text: "Previous"; onClicked: app.previousKeyframe() }
-                                CommandButton { text: "Next"; onClicked: app.nextKeyframe() }
-                                CommandButton { text: "Preview Current"; onClicked: app.previewCurrent() }
+                                CommandButton { id: previousKeyframeButton; text: "Previous"; accessibleDescription: "Move to previous keyframe"; onClicked: app.previousKeyframe() }
+                                CommandButton { id: nextKeyframeButton; text: "Next"; accessibleDescription: "Move to next keyframe"; onClicked: app.nextKeyframe() }
+                                CommandButton { id: previewCurrentButton; text: "Preview Current"; accessibleDescription: "Preview current keyframe segment"; onClicked: app.previewCurrent() }
                                 MetaLabel { text: "JUMP"; Layout.leftMargin: 8 }
                                 Field {
                                     id: jumpTime
                                     text: "00:00:00.000"
+                                    accessibleDescription: "Jump timecode in hours minutes seconds milliseconds"
                                     Layout.preferredWidth: 150
+                                    KeyNavigation.tab: snapButton
                                 }
-                                CommandButton { text: "Snap"; onClicked: app.jumpToTimecode(jumpTime.text) }
+                                CommandButton { id: snapButton; text: "Snap"; accessibleDescription: "Jump playback to jump time"; onClicked: app.jumpToTimecode(jumpTime.text) }
                             }
                             RowLayout {
                                 Layout.fillWidth: true
-                                CommandButton { text: "Set In"; onClicked: app.setIn() }
+                                CommandButton { id: setInButton; text: "Set In"; accessibleDescription: "Set segment in point at current keyframe"; onClicked: app.setIn(); KeyNavigation.tab: setOutButton; KeyNavigation.backtab: snapButton }
                                 StatusPill { text: "IN " + app.pendingInText }
-                                CommandButton { text: "Set Out"; onClicked: app.setOut() }
+                                CommandButton { id: setOutButton; text: "Set Out"; accessibleDescription: "Set segment out point at current keyframe"; onClicked: app.setOut(); KeyNavigation.tab: segmentName; KeyNavigation.backtab: setInButton }
                                 StatusPill { text: "OUT " + app.pendingOutText }
                             }
                             RowLayout {
@@ -335,16 +370,26 @@ ApplicationWindow {
                                 Field {
                                     id: segmentName
                                     placeholderText: "Segment name"
+                                    accessibleDescription: "Name for the segment to add"
                                     Layout.preferredWidth: 180
+                                    KeyNavigation.tab: segmentNotes
+                                    KeyNavigation.backtab: setOutButton
                                 }
                                 Field {
                                     id: segmentNotes
                                     placeholderText: "Notes"
+                                    accessibleDescription: "Optional notes for the segment"
                                     Layout.fillWidth: true
+                                    KeyNavigation.tab: addSegmentButton
+                                    KeyNavigation.backtab: segmentName
                                 }
                                 CommandButton {
+                                    id: addSegmentButton
                                     text: "Add Segment"
+                                    accessibleDescription: "Add a segment using current in and out points"
                                     primary: true
+                                    KeyNavigation.backtab: segmentNotes
+                                    KeyNavigation.tab: table
                                     onClicked: {
                                         app.addSegment(segmentName.text, segmentNotes.text)
                                         segmentName.text = ""
@@ -388,6 +433,18 @@ ApplicationWindow {
                             }
                             TableView {
                                 id: table
+                                focus: true
+                                focusPolicy: Qt.StrongFocus
+                                Accessible.role: Accessible.Table
+                                Accessible.name: "Segments table"
+                                Accessible.description: "List of configured segments. Use arrow keys to navigate rows."
+                                Keys.onPressed: function(event) {
+                                    if (event.key === Qt.Key_Up && app.selectedRow > 0) { app.selectSegment(app.selectedRow - 1); event.accepted = true }
+                                    else if (event.key === Qt.Key_Down && app.selectedRow + 1 < segmentModel.rowCount()) { app.selectSegment(app.selectedRow + 1); event.accepted = true }
+                                    else if (event.key === Qt.Key_E) { if (app.selectedRow >= 0) app.toggleSegment(app.selectedRow, true); event.accepted = true }
+                                    else if (event.key === Qt.Key_D) { if (app.selectedRow >= 0) app.toggleSegment(app.selectedRow, false); event.accepted = true }
+                                    else if (event.key === Qt.Key_Delete || event.key === Qt.Key_Backspace) { if (app.selectedRow >= 0) app.removeSegment(app.selectedRow); event.accepted = true }
+                                }
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 clip: true
@@ -400,7 +457,8 @@ ApplicationWindow {
                                     required property string display
                                     color: row === app.selectedRow ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.16)
                                                                     : (row % 2 === 0 ? root.panel : root.panelAlt)
-                                    border.color: root.line
+                                    border.color: (row === app.selectedRow && table.activeFocus) ? root.accent : root.line
+                                    border.width: (row === app.selectedRow && table.activeFocus) ? 2 : 1
                                     Text {
                                         anchors.fill: parent
                                         anchors.leftMargin: 8
