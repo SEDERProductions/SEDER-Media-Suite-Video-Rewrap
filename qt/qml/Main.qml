@@ -283,9 +283,10 @@ ApplicationWindow {
                         CommandButton { text: "CSV Report"; Layout.fillWidth: true; onClicked: app.exportCsvReport() }
                     }
 
-                    MetaLabel { text: "04 / EXPORT" }
+                    MetaLabel { text: "04 / EXPORT VIDEO" }
+                    MetaLabel { text: "Tip: Export requires FFmpeg/FFprobe, a source video, and an output file path." }
                     CommandButton {
-                        text: app.busy ? "Exporting..." : "Export Stream Copy"
+                        text: app.busy ? "Exporting..." : "Start Export"
                         primary: true
                         enabled: !app.busy
                         Layout.fillWidth: true
@@ -357,7 +358,7 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.margins: 12
                             spacing: 10
-                            MetaLabel { text: "KEYFRAMES AND SEGMENT BUILDER" }
+                            MetaLabel { text: "KEYFRAME NAVIGATION AND SEGMENT CREATION" }
                             GridLayout {
                                 Layout.fillWidth: true
                                 columns: 3
@@ -368,22 +369,23 @@ ApplicationWindow {
                             }
                             RowLayout {
                                 Layout.fillWidth: true
-                                CommandButton { text: "Previous"; onClicked: app.previousKeyframe() }
-                                CommandButton { text: "Next"; onClicked: app.nextKeyframe() }
-                                CommandButton { text: "Preview Current"; onClicked: app.previewCurrent() }
-                                MetaLabel { text: "JUMP"; Layout.leftMargin: 8 }
+                                CommandButton { text: "Go to Previous Keyframe"; onClicked: app.previousKeyframe(); ToolTip.visible: hovered; ToolTip.text: "Move playhead to the previous detected keyframe." }
+                                CommandButton { text: "Go to Next Keyframe"; onClicked: app.nextKeyframe(); ToolTip.visible: hovered; ToolTip.text: "Move playhead to the next detected keyframe." }
+                                CommandButton { text: "Preview Selected Keyframe"; onClicked: app.previewCurrent(); ToolTip.visible: hovered; ToolTip.text: "Play a short preview at the selected keyframe." }
+                                MetaLabel { text: "JUMP TO TIMECODE"; Layout.leftMargin: 8 }
                                 Field {
                                     id: jumpTime
                                     text: "00:00:00.000"
                                     Layout.preferredWidth: 150
                                 }
-                                CommandButton { text: "Snap"; onClicked: app.jumpToTimecode(jumpTime.text) }
+                                CommandButton { text: "Jump to Timecode"; onClicked: app.jumpToTimecode(jumpTime.text); ToolTip.visible: hovered; ToolTip.text: "Use HH:MM:SS.mmm format to move to an exact time." }
                             }
+                            MetaLabel { text: "Tip: Set IN and OUT markers before creating a segment." }
                             RowLayout {
                                 Layout.fillWidth: true
-                                CommandButton { text: "Set In"; onClicked: app.setIn() }
+                                CommandButton { text: "Set In Marker"; onClicked: app.setIn(); ToolTip.visible: hovered; ToolTip.text: "Set the start boundary for the segment you are creating." }
                                 StatusPill { text: "IN " + app.pendingInText }
-                                CommandButton { text: "Set Out"; onClicked: app.setOut() }
+                                CommandButton { text: "Set Out Marker"; onClicked: app.setOut(); ToolTip.visible: hovered; ToolTip.text: "Set the end boundary for the segment you are creating." }
                                 StatusPill { text: "OUT " + app.pendingOutText }
                             }
                             RowLayout {
@@ -399,7 +401,7 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                 }
                                 CommandButton {
-                                    text: "Add Segment"
+                                    text: "Create Segment"
                                     primary: true
                                     onClicked: {
                                         app.addSegment(segmentName.text, segmentNotes.text)
@@ -420,14 +422,14 @@ ApplicationWindow {
                             spacing: 10
                             RowLayout {
                                 Layout.fillWidth: true
-                                MetaLabel { text: "SEGMENTS"; Layout.fillWidth: true }
+                                MetaLabel { text: "SEGMENT LIST"; Layout.fillWidth: true }
                                 StatusPill { text: "TOTAL " + app.totalDurationText; tone: good }
                             }
                             Row {
                                 Layout.fillWidth: true
                                 implicitHeight: 28
                                 Repeater {
-                                    model: ["On", "Name", "In", "Out", "Duration", "Notes"]
+                                    model: ["Enabled", "Segment Name", "In Marker", "Out Marker", "Duration", "Notes"]
                                     Rectangle {
                                         width: root.tableColumnWidth(index)
                                         implicitHeight: 28
@@ -477,10 +479,10 @@ ApplicationWindow {
                             }
                             RowLayout {
                                 Layout.fillWidth: true
-                                CommandButton { text: "Enable"; enabled: app.selectedRow >= 0; onClicked: app.toggleSegment(app.selectedRow, true) }
-                                CommandButton { text: "Disable"; enabled: app.selectedRow >= 0; onClicked: app.toggleSegment(app.selectedRow, false) }
-                                CommandButton { text: "Up"; enabled: app.selectedRow > 0; onClicked: app.moveSegmentUp(app.selectedRow) }
-                                CommandButton { text: "Down"; enabled: app.selectedRow >= 0 && app.selectedRow + 1 < segmentModel.rowCount(); onClicked: app.moveSegmentDown(app.selectedRow) }
+                                CommandButton { text: "Set Enabled"; enabled: app.selectedRow >= 0; onClicked: app.toggleSegment(app.selectedRow, true) }
+                                CommandButton { text: "Set Disabled"; enabled: app.selectedRow >= 0; onClicked: app.toggleSegment(app.selectedRow, false) }
+                                CommandButton { text: "Move Up"; enabled: app.selectedRow > 0; onClicked: app.moveSegmentUp(app.selectedRow) }
+                                CommandButton { text: "Move Down"; enabled: app.selectedRow >= 0 && app.selectedRow + 1 < segmentModel.rowCount(); onClicked: app.moveSegmentDown(app.selectedRow) }
                                 CommandButton { text: "Duplicate"; enabled: app.selectedRow >= 0; onClicked: app.duplicateSegment(app.selectedRow) }
                                 CommandButton { text: "Delete"; enabled: app.selectedRow >= 0; onClicked: app.removeSegment(app.selectedRow) }
                                 Item { Layout.fillWidth: true }
