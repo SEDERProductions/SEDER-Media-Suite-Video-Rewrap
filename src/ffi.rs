@@ -269,7 +269,7 @@ pub extern "C" fn svr_export_plan(
         let source = Path::new(&source);
         let output = Path::new(&output);
         let temp_root = PathBuf::from(temp_root);
-        let extension = output_extension(source);
+        let extension = output_extension(output);
         let mut segment_paths = Vec::with_capacity(enabled.len());
         let mut planned_segments = Vec::with_capacity(enabled.len());
         for (index, segment) in enabled.iter().enumerate() {
@@ -452,5 +452,43 @@ mod tests {
             .unwrap()
             .contains("segment-0001.mov"));
         assert_eq!(parsed["concatCommand"]["program"], "ffmpeg");
+    }
+
+    #[test]
+    fn ffi_export_plan_segment_extension_follows_output_suffix() {
+        let source = CString::new("/tmp/source.mkv").unwrap();
+        let temp = CString::new("/tmp/seder-video-rewrap").unwrap();
+        let segments =
+            CString::new(r#"[{"name":"A","in_ms":0,"out_ms":1000,"notes":"","enabled":true}]"#)
+                .unwrap();
+        let keyframes = CString::new("[0,1000]").unwrap();
+
+        let output_mp4 = CString::new("/tmp/out.mp4").unwrap();
+        let parsed_mp4 = call(svr_export_plan(
+            source.as_ptr(),
+            output_mp4.as_ptr(),
+            temp.as_ptr(),
+            segments.as_ptr(),
+            keyframes.as_ptr(),
+        ));
+        assert_eq!(parsed_mp4["ok"], true);
+        assert!(parsed_mp4["listText"]
+            .as_str()
+            .unwrap()
+            .contains("segment-0001.mp4"));
+
+        let output_mxf = CString::new("/tmp/out.mxf").unwrap();
+        let parsed_mxf = call(svr_export_plan(
+            source.as_ptr(),
+            output_mxf.as_ptr(),
+            temp.as_ptr(),
+            segments.as_ptr(),
+            keyframes.as_ptr(),
+        ));
+        assert_eq!(parsed_mxf["ok"], true);
+        assert!(parsed_mxf["listText"]
+            .as_str()
+            .unwrap()
+            .contains("segment-0001.mxf"));
     }
 }
