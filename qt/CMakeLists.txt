@@ -87,6 +87,7 @@ enable_testing()
 
 qt_add_executable(segment-model-tests
     tests/SegmentTableModelTests.cpp
+    src/AppController.cpp
     src/RustBridge.cpp
     src/SegmentTableModel.cpp
 )
