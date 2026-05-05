@@ -57,12 +57,17 @@ ApplicationWindow {
     readonly property color good: dark ? "#4cab7e" : "#1f7a4d"
     readonly property color warn: dark ? "#c99746" : "#9a6a16"
     readonly property color bad: dark ? "#d25645" : "#b43a1f"
+    readonly property string uiFontFamily: Qt.application.font.family
+    readonly property string monoFontFamily: Qt.platform.os === "osx"
+        ? "Menlo"
+        : (Qt.platform.os === "windows" ? "Consolas" : "Monospace")
 
     color: bg
 
     component MetaLabel: Label {
         color: faint
-        font.family: "Menlo"
+        font.family: root.monoFontFamily
+        font.styleHint: Font.Monospace
         font.pixelSize: 10
         font.capitalization: Font.AllUppercase
         elide: Text.ElideRight
@@ -70,7 +75,8 @@ ApplicationWindow {
 
     component PathLabel: Label {
         color: muted
-        font.family: "Menlo"
+        font.family: root.monoFontFamily
+        font.styleHint: Font.Monospace
         font.pixelSize: 12
         elide: Text.ElideMiddle
         wrapMode: Text.NoWrap
@@ -98,7 +104,8 @@ ApplicationWindow {
             anchors.centerIn: parent
             text: "\u25cf " + statusPill.text
             color: statusPill.tone
-            font.family: "Menlo"
+            font.family: root.monoFontFamily
+            font.styleHint: Font.Monospace
             font.pixelSize: 10
             font.capitalization: Font.AllUppercase
         }
@@ -110,6 +117,7 @@ ApplicationWindow {
         implicitHeight: 34
         padding: 10
         font.pixelSize: 13
+        font.family: root.uiFontFamily
         palette.buttonText: primary ? "white" : root.ink
         background: Rectangle {
             radius: 5
@@ -137,6 +145,7 @@ ApplicationWindow {
                 color: metric.tone
                 font.bold: true
                 font.pixelSize: 18
+                font.family: root.uiFontFamily
                 elide: Text.ElideRight
                 Layout.fillWidth: true
             }
@@ -149,6 +158,7 @@ ApplicationWindow {
         selectedTextColor: "white"
         selectionColor: root.accent
         font.pixelSize: 13
+        font.family: root.uiFontFamily
         background: Rectangle {
             radius: 5
             color: root.dark ? "#181613" : "#fffaf0"
@@ -178,6 +188,7 @@ ApplicationWindow {
                     Label {
                         text: "SEDER Media Suite Video Rewrap"
                         color: ink
+                        font.family: root.uiFontFamily
                         font.pixelSize: 30
                         font.bold: true
                         elide: Text.ElideRight
@@ -222,6 +233,7 @@ ApplicationWindow {
                             anchors.centerIn: parent
                             text: "RW"
                             color: ink
+                            font.family: root.uiFontFamily
                             font.bold: true
                             font.pixelSize: 18
                         }
@@ -452,7 +464,8 @@ ApplicationWindow {
                                         verticalAlignment: Text.AlignVCenter
                                         text: display
                                         color: column === 0 && display === "OFF" ? root.faint : root.ink
-                                        font.family: column >= 2 ? "Menlo, Consolas, monospace" : "Manrope"
+                                        font.family: column >= 2 ? root.monoFontFamily : root.uiFontFamily
+                                        font.styleHint: column >= 2 ? Font.Monospace : Font.SansSerif
                                         font.pixelSize: 12
                                         elide: Text.ElideRight
                                     }
