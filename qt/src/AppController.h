@@ -96,6 +96,7 @@ public:
     void setToolsReadyForTesting(bool ffmpegReady, bool ffprobeReady);
     void setOverwriteDecisionProviderForTesting(const std::function<bool(const QString &)> &provider);
     bool overwriteApprovedForSessionForTesting() const;
+    void setKeyframesForTesting(const QVector<qint64> &keyframes);
 
 signals:
     void sourcePathChanged();

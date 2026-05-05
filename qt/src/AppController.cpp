@@ -23,11 +23,13 @@ AppController::AppController(SegmentTableModel *segments, QObject *parent)
     QSettings settings;
     m_theme = settings.value("theme", "system").toString();
     setTheme(m_theme);
-    connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this, [this] {
-        if (m_theme == "system") {
-            setTheme("system");
-        }
-    });
+    if (QGuiApplication::instance()) {
+        connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this, [this] {
+            if (m_theme == "system") {
+                setTheme("system");
+            }
+        });
+    }
     recheckToolsBackground();
 }
 
@@ -964,6 +966,11 @@ void AppController::setOverwriteDecisionProviderForTesting(const std::function<b
 bool AppController::overwriteApprovedForSessionForTesting() const
 {
     return m_overwriteApprovedForSession;
+}
+
+void AppController::setKeyframesForTesting(const QVector<qint64> &keyframes)
+{
+    m_keyframes = keyframes;
 }
 
 bool AppController::writeTextFile(const QString &path, const QString &contents)

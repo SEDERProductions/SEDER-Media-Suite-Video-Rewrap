@@ -148,3 +148,4 @@ if(APPLE)
 endif()
 
 add_test(NAME app-controller-tests COMMAND app-controller-tests)
+set_tests_properties(app-controller-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

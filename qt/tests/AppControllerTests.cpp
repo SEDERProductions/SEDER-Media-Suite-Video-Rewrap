@@ -99,6 +99,7 @@ private slots:
         model.append(SegmentRow { "A", 0, 1000, "", true });
         controller.setPathsForTesting(sourcePath, outputPath);
         controller.setOverwriteDecisionProviderForTesting([](const QString &) { return true; });
+        controller.setKeyframesForTesting({0, 1000});
 
         const bool allowed = controller.ensureCanExportForTesting();
         QVERIFY2(allowed, qPrintable(controller.logText()));
