@@ -1,16 +1,50 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 
 ApplicationWindow {
     id: root
-    width: 1380
-    height: 920
-    minimumWidth: 1060
-    minimumHeight: 760
+    width: Math.max(minimumWidth, Math.min(maximumWidth, Screen.width * 0.86))
+    height: Math.max(minimumHeight, Math.min(maximumHeight, Screen.height * 0.9))
+    minimumWidth: 980
+    minimumHeight: 700
+    maximumWidth: 1920
+    maximumHeight: 1280
     visible: true
     title: "SEDER Media Suite Video Rewrap"
 
+
+    readonly property bool compactLayout: width < 1240
+    readonly property real leftRailWidth: Math.max(72, Math.min(96, width * 0.07))
+    readonly property real toolsPanePreferredWidth: Math.max(300, Math.min(420, width * (compactLayout ? 0.3 : 0.27)))
+    readonly property real tableAvailableWidth: Math.max(620, table.width)
+    readonly property var tableColumnMinimums: [64, 170, 120, 120, 120, 220]
+    readonly property var tableColumnWeights: [1.0, 2.0, 1.3, 1.3, 1.3, 3.1]
+
+    function tableColumnWidth(column) {
+        var minimumTotal = 0
+        for (var i = 0; i < tableColumnMinimums.length; ++i)
+            minimumTotal += tableColumnMinimums[i]
+
+        var extra = Math.max(0, tableAvailableWidth - minimumTotal)
+        var weightTotal = 0
+        for (var j = 0; j < tableColumnWeights.length; ++j)
+            weightTotal += tableColumnWeights[j]
+
+        var widths = []
+        for (var k = 0; k < tableColumnMinimums.length; ++k) {
+            widths[k] = tableColumnMinimums[k] + extra * (tableColumnWeights[k] / weightTotal)
+        }
+
+        var notesIndex = tableColumnMinimums.length - 1
+        var used = 0
+        for (var n = 0; n < notesIndex; ++n)
+            used += widths[n]
+        widths[notesIndex] = Math.max(tableColumnMinimums[notesIndex], tableAvailableWidth - used)
+
+        return widths[column]
+    }
     readonly property bool dark: app.darkMode
     readonly property color bg: dark ? "#12110f" : "#ece6d9"
     readonly property color panel: dark ? "#1f1d1a" : "#f8f4ea"
@@ -129,7 +163,7 @@ ApplicationWindow {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 86
+            Layout.preferredHeight: compactLayout ? 72 : 86
             color: bg
             border.color: line
             border.width: 0
@@ -164,7 +198,11 @@ ApplicationWindow {
             spacing: 0
 
             Rectangle {
-                Layout.preferredWidth: 88
+                Layout.preferredWidth: leftRailWidth
+                Layout.minimumWidth: 72
+                Layout.maximumWidth: 96
+                Layout.fillWidth: true
+                Layout.horizontalStretchFactor: 1
                 Layout.fillHeight: true
                 color: panel
                 border.color: line
@@ -193,12 +231,16 @@ ApplicationWindow {
             }
 
             ScrollView {
-                Layout.preferredWidth: 372
+                Layout.preferredWidth: toolsPanePreferredWidth
+                Layout.minimumWidth: 280
+                Layout.maximumWidth: 460
+                Layout.fillWidth: true
+                Layout.horizontalStretchFactor: 4
                 Layout.fillHeight: true
                 clip: true
                 background: Rectangle { color: panel; border.color: line }
                 ColumnLayout {
-                    width: 348
+                    width: parent.availableWidth - 28
                     x: 14
                     y: 14
                     spacing: 14
@@ -262,6 +304,8 @@ ApplicationWindow {
             Flickable {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                Layout.minimumWidth: 460
+                Layout.horizontalStretchFactor: 9
                 contentWidth: width
                 contentHeight: workspace.implicitHeight + 24
                 clip: true
@@ -275,7 +319,7 @@ ApplicationWindow {
 
                     Panel {
                         Layout.fillWidth: true
-                        implicitHeight: 134
+                        implicitHeight: compactLayout ? 154 : 134
                         ColumnLayout {
                             anchors.fill: parent
                             anchors.margins: 12
@@ -296,7 +340,7 @@ ApplicationWindow {
 
                     Panel {
                         Layout.fillWidth: true
-                        implicitHeight: 210
+                        implicitHeight: compactLayout ? 242 : 210
                         ColumnLayout {
                             anchors.fill: parent
                             anchors.margins: 12
@@ -357,7 +401,7 @@ ApplicationWindow {
 
                     Panel {
                         Layout.fillWidth: true
-                        implicitHeight: Math.max(340, root.height - 536)
+                        implicitHeight: Math.max(compactLayout ? 300 : 340, root.height - (compactLayout ? 500 : 536))
                         ColumnLayout {
                             anchors.fill: parent
                             anchors.margins: 12
@@ -369,12 +413,12 @@ ApplicationWindow {
                             }
                             Row {
                                 Layout.fillWidth: true
-                                height: 28
+                                implicitHeight: 28
                                 Repeater {
                                     model: ["On", "Name", "In", "Out", "Duration", "Notes"]
                                     Rectangle {
-                                        width: [72, 210, 132, 132, 132, 320][index]
-                                        height: 28
+                                        width: root.tableColumnWidth(index)
+                                        implicitHeight: 28
                                         color: panelAlt
                                         border.color: line
                                         MetaLabel {
@@ -392,7 +436,7 @@ ApplicationWindow {
                                 Layout.fillHeight: true
                                 clip: true
                                 model: segmentModel
-                                columnWidthProvider: function(column) { return [72, 210, 132, 132, 132, 320][column] }
+                                columnWidthProvider: function(column) { return root.tableColumnWidth(column) }
                                 rowHeightProvider: function(row) { return 34 }
                                 delegate: Rectangle {
                                     required property int row
@@ -436,7 +480,7 @@ ApplicationWindow {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 48
+            Layout.preferredHeight: compactLayout ? 42 : 48
             color: panel
             border.color: line
             RowLayout {
