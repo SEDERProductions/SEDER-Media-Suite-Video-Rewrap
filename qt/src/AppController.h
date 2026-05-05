@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
+#include <functional>
 #include <atomic>
 #include <functional>
 
@@ -90,6 +91,12 @@ public:
     Q_INVOKABLE void setTheme(const QString &theme);
     Q_INVOKABLE void setExportMode(const QString &mode);
 
+    bool ensureCanExportForTesting();
+    void setPathsForTesting(const QString &source, const QString &output);
+    void setToolsReadyForTesting(bool ffmpegReady, bool ffprobeReady);
+    void setOverwriteDecisionProviderForTesting(const std::function<bool(const QString &)> &provider);
+    bool overwriteApprovedForSessionForTesting() const;
+
 signals:
     void sourcePathChanged();
     void outputPathChanged();
@@ -132,6 +139,7 @@ private:
     static ProcessResult runCommand(const RustBridge::Command &command, std::atomic_bool *cancel = nullptr);
     static QString bytesText(quint64 bytes);
     bool ensureCanExport();
+    bool requestOverwriteApproval(const QString &outputPath);
     bool writeTextFile(const QString &path, const QString &contents);
     bool runExportFlow(const QString &dialogTitle,
         const QString &dialogFilter,
@@ -171,5 +179,7 @@ private:
     QString m_exportMode = "concat_single";
     bool m_darkMode = true;
     std::atomic_bool m_cancelExport = false;
+    bool m_overwriteApprovedForSession = false;
+    std::function<bool(const QString &)> m_overwriteDecisionProvider;
     qint64 m_lastToolCheckMs = 0;
 };

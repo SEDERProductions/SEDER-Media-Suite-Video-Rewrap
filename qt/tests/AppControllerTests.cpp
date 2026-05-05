@@ -4,6 +4,8 @@
 
 #include "SegmentTableModel.h"
 
+#include <QTemporaryDir>
+#include <QFile>
 #include <QtTest/QtTest>
 
 class AppControllerTests : public QObject
@@ -57,6 +59,51 @@ private slots:
         QVERIFY(status.contains("ffmpeg"));
         QVERIFY(status.contains("ffplay"));
         QVERIFY(!status.contains("ffprobe,"));
+    }
+
+    void existingOutput_declineCancelsExportGate()
+    {
+        SegmentTableModel model;
+        AppController controller(&model);
+        controller.setToolsReadyForTesting(true, true);
+
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString sourcePath = dir.filePath("source.mov");
+        const QString outputPath = dir.filePath("output.mov");
+        QVERIFY(QFile(sourcePath).open(QIODevice::WriteOnly));
+        QVERIFY(QFile(outputPath).open(QIODevice::WriteOnly));
+
+        model.append(SegmentRow { "A", 0, 1000, "", true });
+        controller.setPathsForTesting(sourcePath, outputPath);
+        controller.setOverwriteDecisionProviderForTesting([](const QString &) { return false; });
+
+        QVERIFY(!controller.ensureCanExportForTesting());
+        QVERIFY(!controller.overwriteApprovedForSessionForTesting());
+        QVERIFY(controller.logText().contains("overwrite declined"));
+    }
+
+    void existingOutput_acceptAllowsExportGate()
+    {
+        SegmentTableModel model;
+        AppController controller(&model);
+        controller.setToolsReadyForTesting(true, true);
+
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString sourcePath = dir.filePath("source.mov");
+        const QString outputPath = dir.filePath("output.mov");
+        QVERIFY(QFile(sourcePath).open(QIODevice::WriteOnly));
+        QVERIFY(QFile(outputPath).open(QIODevice::WriteOnly));
+
+        model.append(SegmentRow { "A", 0, 1000, "", true });
+        controller.setPathsForTesting(sourcePath, outputPath);
+        controller.setOverwriteDecisionProviderForTesting([](const QString &) { return true; });
+
+        const bool allowed = controller.ensureCanExportForTesting();
+        QVERIFY2(allowed, qPrintable(controller.logText()));
+        QVERIFY(controller.overwriteApprovedForSessionForTesting());
+        QVERIFY(controller.logText().contains("Overwrite approved"));
     }
 };
 

@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonDocument>
+#include <QMessageBox>
 #include <QProcess>
 #include <QSettings>
 #include <QStandardPaths>
@@ -248,6 +249,7 @@ void AppController::exportCsvReport()
 
 void AppController::startExport()
 {
+    m_overwriteApprovedForSession = false;
     if (!ensureCanExport()) {
         return;
     }
@@ -364,7 +366,10 @@ void AppController::startExport()
                 setProgress(0.9);
                 setLogText("Concatenating enabled segments...");
             }, Qt::QueuedConnection);
-            const RustBridge::Command concat = RustBridge::commandFromJson(plan.value("concatCommand").toObject());
+            RustBridge::Command concat = RustBridge::commandFromJson(plan.value("concatCommand").toObject());
+            if (!m_overwriteApprovedForSession) {
+                concat.args.removeAll(QStringLiteral("-y"));
+            }
             result = runCommand(concat, &m_cancelExport);
         }
         QDir(tempRoot).removeRecursively();
@@ -895,6 +900,17 @@ bool AppController::ensureCanExport()
         setLogText("Choose an output file first.");
         return false;
     }
+    if (QFileInfo::exists(m_outputPath)) {
+        if (!requestOverwriteApproval(m_outputPath)) {
+            m_overwriteApprovedForSession = false;
+            setLogText(QStringLiteral("Export cancelled: overwrite declined for %1").arg(displayPath(m_outputPath)));
+            return false;
+        }
+        m_overwriteApprovedForSession = true;
+        setLogText(QStringLiteral("Overwrite approved for existing output: %1").arg(displayPath(m_outputPath)));
+    } else {
+        m_overwriteApprovedForSession = false;
+    }
     if (m_segments->rowCount() == 0) {
         setLogText("Add at least one segment before exporting.");
         return false;
@@ -905,6 +921,49 @@ bool AppController::ensureCanExport()
         return false;
     }
     return true;
+}
+
+bool AppController::requestOverwriteApproval(const QString &outputPath)
+{
+    if (m_overwriteDecisionProvider) {
+        return m_overwriteDecisionProvider(outputPath);
+    }
+
+    const QMessageBox::StandardButton reply = QMessageBox::question(
+        nullptr,
+        QStringLiteral("Overwrite Output File"),
+        QStringLiteral("The output file already exists:\n%1\n\nDo you want to overwrite it?").arg(displayPath(outputPath)),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    return reply == QMessageBox::Yes;
+}
+
+bool AppController::ensureCanExportForTesting()
+{
+    return ensureCanExport();
+}
+
+void AppController::setPathsForTesting(const QString &source, const QString &output)
+{
+    m_sourcePath = source;
+    m_outputPath = output;
+}
+
+void AppController::setToolsReadyForTesting(bool ffmpegReady, bool ffprobeReady)
+{
+    m_ffmpegReady = ffmpegReady;
+    m_ffprobeReady = ffprobeReady;
+    m_lastToolCheckMs = QDateTime::currentMSecsSinceEpoch();
+}
+
+void AppController::setOverwriteDecisionProviderForTesting(const std::function<bool(const QString &)> &provider)
+{
+    m_overwriteDecisionProvider = provider;
+}
+
+bool AppController::overwriteApprovedForSessionForTesting() const
+{
+    return m_overwriteApprovedForSession;
 }
 
 bool AppController::writeTextFile(const QString &path, const QString &contents)
