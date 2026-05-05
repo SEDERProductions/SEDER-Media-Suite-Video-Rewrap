@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
+#include <QVariantList>
 #include <atomic>
 
 class AppController : public QObject
@@ -15,6 +16,7 @@ class AppController : public QObject
     Q_PROPERTY(QString sourcePath READ sourcePath NOTIFY sourcePathChanged)
     Q_PROPERTY(QString outputPath READ outputPath NOTIFY outputPathChanged)
     Q_PROPERTY(QString logText READ logText NOTIFY logTextChanged)
+    Q_PROPERTY(QVariantList activityLog READ activityLog NOTIFY activityLogChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(double progress READ progress NOTIFY progressChanged)
     Q_PROPERTY(bool ffmpegReady READ ffmpegReady NOTIFY toolsChanged)
@@ -42,6 +44,7 @@ public:
     QString sourcePath() const;
     QString outputPath() const;
     QString logText() const;
+    QVariantList activityLog() const;
     bool busy() const;
     double progress() const;
     bool ffmpegReady() const;
@@ -85,11 +88,13 @@ public:
     Q_INVOKABLE void moveSegmentDown(int row);
     Q_INVOKABLE void toggleSegment(int row, bool enabled);
     Q_INVOKABLE void setTheme(const QString &theme);
+    Q_INVOKABLE void copyLogEntry(const QString &message);
 
 signals:
     void sourcePathChanged();
     void outputPathChanged();
     void logTextChanged();
+    void activityLogChanged();
     void busyChanged();
     void progressChanged();
     void toolsChanged();
@@ -111,6 +116,7 @@ private:
     void setSourcePath(const QString &path);
     void setOutputPath(const QString &path);
     void setLogText(const QString &text);
+    void addLogEntry(const QString &severity, const QString &text, bool updateStatus = true);
     void setBusy(bool busy);
     void setProgress(double progress);
     void setSelectedRowValue(int row);
@@ -135,6 +141,7 @@ private:
     QString m_sourcePath;
     QString m_outputPath;
     QString m_logText;
+    QVariantList m_activityLog;
     bool m_busy = false;
     double m_progress = 0.0;
     bool m_ffmpegReady = false;

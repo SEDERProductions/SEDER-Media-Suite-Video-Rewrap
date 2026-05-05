@@ -25,6 +25,7 @@ ApplicationWindow {
     readonly property color bad: dark ? "#d25645" : "#b43a1f"
 
     color: bg
+    property bool activityPanelExpanded: false
 
     component MetaLabel: Label {
         color: faint
@@ -427,6 +428,74 @@ ApplicationWindow {
                                 CommandButton { text: "Duplicate"; enabled: app.selectedRow >= 0; onClicked: app.duplicateSegment(app.selectedRow) }
                                 CommandButton { text: "Delete"; enabled: app.selectedRow >= 0; onClicked: app.removeSegment(app.selectedRow) }
                                 Item { Layout.fillWidth: true }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: activityPanelExpanded ? 220 : 42
+            color: panel
+            border.color: line
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 10
+                spacing: 8
+                RowLayout {
+                    Layout.fillWidth: true
+                    MetaLabel { text: "ACTIVITY LOG"; Layout.fillWidth: true }
+                    CommandButton {
+                        text: activityPanelExpanded ? "Hide" : "Show"
+                        onClicked: activityPanelExpanded = !activityPanelExpanded
+                    }
+                }
+                ScrollView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    visible: activityPanelExpanded
+                    clip: true
+                    ListView {
+                        model: app.activityLog
+                        spacing: 6
+                        delegate: Rectangle {
+                            width: ListView.view.width
+                            implicitHeight: logMessage.implicitHeight + 12
+                            color: index % 2 === 0 ? root.panel : root.panelAlt
+                            border.color: root.line
+                            radius: 4
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                spacing: 8
+                                StatusPill {
+                                    text: (modelData.severity || "info").toUpperCase()
+                                    tone: modelData.severity === "error" ? root.bad : (modelData.severity === "warn" ? root.warn : root.good)
+                                }
+                                Label {
+                                    text: modelData.timestamp
+                                    color: root.faint
+                                    font.family: "Menlo"
+                                    font.pixelSize: 11
+                                    Layout.alignment: Qt.AlignTop
+                                }
+                                TextArea {
+                                    id: logMessage
+                                    text: modelData.message
+                                    wrapMode: Text.WrapAnywhere
+                                    readOnly: true
+                                    selectByMouse: true
+                                    color: root.ink
+                                    font.pixelSize: 12
+                                    Layout.fillWidth: true
+                                    background: null
+                                }
+                                CommandButton {
+                                    text: "Copy"
+                                    onClicked: app.copyLogEntry(modelData.message)
+                                }
                             }
                         }
                     }

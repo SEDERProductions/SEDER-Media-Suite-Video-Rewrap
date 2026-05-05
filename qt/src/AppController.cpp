@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QCoreApplication>
+#include <QClipboard>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
@@ -34,6 +35,7 @@ SegmentTableModel *AppController::segmentModel() const { return m_segments; }
 QString AppController::sourcePath() const { return m_sourcePath; }
 QString AppController::outputPath() const { return m_outputPath; }
 QString AppController::logText() const { return m_logText; }
+QVariantList AppController::activityLog() const { return m_activityLog; }
 bool AppController::busy() const { return m_busy; }
 double AppController::progress() const { return m_progress; }
 bool AppController::ffmpegReady() const { return m_ffmpegReady; }
@@ -97,6 +99,7 @@ void AppController::recheckTools()
     m_ffplayReady = programExists("ffplay");
     m_lastToolCheckMs = QDateTime::currentMSecsSinceEpoch();
     emit toolsChanged();
+    addLogEntry("info", toolStatusText());
 }
 
 // programExists() runs three blocking QProcess "-version" probes that can stack
@@ -126,7 +129,7 @@ void AppController::recheckToolsBackground()
             m_ffplayReady = ffplayOk;
             m_lastToolCheckMs = timestamp;
             emit toolsChanged();
-            setLogText(toolStatusText());
+            addLogEntry("info", toolStatusText());
         }, Qt::QueuedConnection);
     });
     connect(worker, &QThread::finished, worker, &QObject::deleteLater);
@@ -260,7 +263,7 @@ void AppController::startExport()
     m_cancelExport = false;
     setBusy(true);
     setProgress(0.05);
-    setLogText("Exporting with FFmpeg stream copy only...");
+    addLogEntry("info", "Export started: FFmpeg stream copy only.");
 
     QThread *worker = QThread::create([this, tempRoot, plan] {
         QDir().mkpath(tempRoot);
@@ -271,7 +274,7 @@ void AppController::startExport()
                 QMetaObject::invokeMethod(this, [this] {
                     setBusy(false);
                     setProgress(0.0);
-                    setLogText("Export cancelled.");
+                    addLogEntry("warn", "Export cancelled.");
                 }, Qt::QueuedConnection);
                 return;
             }
@@ -290,7 +293,7 @@ void AppController::startExport()
                 QMetaObject::invokeMethod(this, [this, path, result] {
                     setBusy(false);
                     setProgress(0.0);
-                    setLogText(QStringLiteral("Segment export failed for %1\n%2")
+                    addLogEntry("error", QStringLiteral("Segment export failed for %1\n%2")
                         .arg(displayPath(path), result.stderrText));
                 }, Qt::QueuedConnection);
                 return;
@@ -304,7 +307,7 @@ void AppController::startExport()
             QMetaObject::invokeMethod(this, [this, error] {
                 setBusy(false);
                 setProgress(0.0);
-                setLogText(QStringLiteral("Unable to write concat list: %1").arg(error));
+                addLogEntry("error", QStringLiteral("Unable to write concat list: %1").arg(error));
             }, Qt::QueuedConnection);
             return;
         }
@@ -313,7 +316,7 @@ void AppController::startExport()
 
         QMetaObject::invokeMethod(this, [this] {
             setProgress(0.9);
-            setLogText("Concatenating enabled segments...");
+            addLogEntry("info", "Concatenating enabled segments...");
         }, Qt::QueuedConnection);
         const RustBridge::Command concat = RustBridge::commandFromJson(plan.value("concatCommand").toObject());
         const ProcessResult result = runCommand(concat, &m_cancelExport);
@@ -323,10 +326,10 @@ void AppController::startExport()
             setBusy(false);
             if (result.ok) {
                 setProgress(1.0);
-                setLogText(QStringLiteral("Export complete: %1").arg(displayPath(m_outputPath)));
+                addLogEntry("info", QStringLiteral("Export complete: %1").arg(displayPath(m_outputPath)));
             } else {
                 setProgress(0.0);
-                setLogText(QStringLiteral("Export failed. No re-encode fallback was attempted.\n%1")
+                addLogEntry("error", QStringLiteral("Export failed. No re-encode fallback was attempted.\n%1")
                     .arg(result.stderrText));
             }
         }, Qt::QueuedConnection);
@@ -341,7 +344,7 @@ void AppController::cancelExport()
         return;
     }
     m_cancelExport = true;
-    setLogText("Cancelling export...");
+    addLogEntry("warn", "Cancelling export...");
 }
 
 void AppController::jumpToTimecode(const QString &timecode)
@@ -551,11 +554,34 @@ void AppController::setOutputPath(const QString &path)
 
 void AppController::setLogText(const QString &text)
 {
-    if (m_logText == text) {
+    addLogEntry("info", text);
+}
+
+void AppController::addLogEntry(const QString &severity, const QString &text, bool updateStatus)
+{
+    const QString normalized = severity.toLower();
+    const QString safeSeverity = (normalized == "warn" || normalized == "error") ? normalized : QStringLiteral("info");
+    const QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+    QVariantMap entry;
+    entry.insert("timestamp", timestamp);
+    entry.insert("severity", safeSeverity);
+    entry.insert("message", text);
+    m_activityLog.push_back(entry);
+    constexpr int kMaxEntries = 200;
+    if (m_activityLog.size() > kMaxEntries) {
+        m_activityLog.remove(0, m_activityLog.size() - kMaxEntries);
+    }
+    emit activityLogChanged();
+    if (!updateStatus || m_logText == text) {
         return;
     }
     m_logText = text;
     emit logTextChanged();
+}
+
+void AppController::copyLogEntry(const QString &message)
+{
+    QGuiApplication::clipboard()->setText(message);
 }
 
 void AppController::setBusy(bool busy)
@@ -595,7 +621,7 @@ void AppController::probeSource(const QString &path)
     }
     setBusy(true);
     setProgress(0.1);
-    setLogText("Probing video metadata and keyframes...");
+    addLogEntry("info", "Source probing started.");
 
     QThread *worker = QThread::create([this, path] {
         const QJsonObject metadataReply = RustBridge::ffprobeMetadataCommand(path);
@@ -617,7 +643,7 @@ void AppController::probeSource(const QString &path)
             QMetaObject::invokeMethod(this, [this, error] {
                 setBusy(false);
                 setProgress(0.0);
-                setLogText(QStringLiteral("Probe failed: %1").arg(error));
+                addLogEntry("error", QStringLiteral("Probe failed: %1").arg(error));
             }, Qt::QueuedConnection);
             return;
         }
@@ -632,12 +658,12 @@ void AppController::probeSource(const QString &path)
             setBusy(false);
             if (!parsed.value("ok").toBool()) {
                 setProgress(0.0);
-                setLogText(QStringLiteral("Probe failed: %1").arg(parsed.value("error").toString()));
+                addLogEntry("error", QStringLiteral("Probe failed: %1").arg(parsed.value("error").toString()));
                 return;
             }
             applyMetadata(parsed.value("metadata").toObject(), parsed.value("keyframes").toArray());
             setProgress(0.0);
-            setLogText(QStringLiteral("Detected %1 keyframes.").arg(m_keyframes.size()));
+            addLogEntry("info", QStringLiteral("Source probing complete. Detected %1 keyframes.").arg(m_keyframes.size()));
         }, Qt::QueuedConnection);
     });
     connect(worker, &QThread::finished, worker, &QObject::deleteLater);
