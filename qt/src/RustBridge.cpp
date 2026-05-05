@@ -44,10 +44,75 @@ QJsonObject RustBridge::decode(char *raw)
     return document.object();
 }
 
-QJsonObject RustBridge::parseTimecode(const QString &value)
+QJsonObject RustBridge::invokeQStr1(FfiCallQStr1 call, const QString &value)
 {
     const QByteArray v = utf8(value);
-    return decode(svr_parse_timecode(v.constData()));
+    return decode(call(v.constData()));
+}
+
+QJsonObject RustBridge::invokeQStrQStrJson(
+    FfiCallQStr2Json1 call,
+    const QString &first,
+    const QString &second,
+    const QJsonArray &array)
+{
+    const QByteArray a = utf8(first);
+    const QByteArray b = utf8(second);
+    const QByteArray c = jsonBytes(array);
+    return decode(call(a.constData(), b.constData(), c.constData()));
+}
+
+QJsonObject RustBridge::invokeJsonI64(FfiCallJson1I64 call, const QJsonArray &array, qint64 value)
+{
+    const QByteArray a = jsonBytes(array);
+    return decode(call(a.constData(), value));
+}
+
+QJsonObject RustBridge::invokeQStrI64(FfiCallQStr1I64 call, const QString &value, qint64 number)
+{
+    const QByteArray v = utf8(value);
+    return decode(call(v.constData(), number));
+}
+
+QJsonObject RustBridge::invokeQStrU64QStrQStr(
+    FfiCallQStr1U64QStr2 call,
+    const QString &first,
+    quint64 number,
+    const QString &second,
+    const QString &third)
+{
+    const QByteArray a = utf8(first);
+    const QByteArray b = utf8(second);
+    const QByteArray c = utf8(third);
+    return decode(call(a.constData(), number, b.constData(), c.constData()));
+}
+
+QJsonObject RustBridge::invokeJsonJson(FfiCallJson2 call, const QJsonArray &first, const QJsonArray &second)
+{
+    const QByteArray a = jsonBytes(first);
+    const QByteArray b = jsonBytes(second);
+    return decode(call(a.constData(), b.constData()));
+}
+
+QJsonObject RustBridge::invokeQStrQStrQStrJsonJson(
+    FfiCallQStr3Json2 call,
+    const QString &first,
+    const QString &second,
+    const QString &third,
+    const QJsonArray &fourth,
+    const QJsonArray &fifth)
+{
+    const QByteArray a = utf8(first);
+    const QByteArray b = utf8(second);
+    const QByteArray c = utf8(third);
+    const QByteArray d = jsonBytes(fourth);
+    const QByteArray e = jsonBytes(fifth);
+    return decode(call(a.constData(), b.constData(), c.constData(), d.constData(), e.constData()));
+}
+
+QJsonObject RustBridge::parseTimecode(const QString &value)
+{
+    return invokeQStr1(svr_parse_timecode, value);
 }
 
 QJsonObject RustBridge::formatTimecode(qint64 milliseconds)
@@ -57,20 +122,17 @@ QJsonObject RustBridge::formatTimecode(qint64 milliseconds)
 
 QJsonObject RustBridge::ffprobeMetadataCommand(const QString &source)
 {
-    const QByteArray s = utf8(source);
-    return decode(svr_ffprobe_metadata_command(s.constData()));
+    return invokeQStr1(svr_ffprobe_metadata_command, source);
 }
 
 QJsonObject RustBridge::ffprobeKeyframeCommand(const QString &source)
 {
-    const QByteArray s = utf8(source);
-    return decode(svr_ffprobe_keyframe_command(s.constData()));
+    return invokeQStr1(svr_ffprobe_keyframe_command, source);
 }
 
 QJsonObject RustBridge::ffplayPreviewCommand(const QString &source, qint64 startMs)
 {
-    const QByteArray s = utf8(source);
-    return decode(svr_ffplay_preview_command(s.constData(), startMs));
+    return invokeQStrI64(svr_ffplay_preview_command, source, startMs);
 }
 
 QJsonObject RustBridge::parseProbeResult(
@@ -79,27 +141,22 @@ QJsonObject RustBridge::parseProbeResult(
     const QString &metadataOutput,
     const QString &keyframeOutput)
 {
-    const QByteArray s = utf8(source);
-    const QByteArray m = utf8(metadataOutput);
-    const QByteArray k = utf8(keyframeOutput);
-    return decode(svr_parse_probe_result(
-        s.constData(),
+    return invokeQStrU64QStrQStr(
+        svr_parse_probe_result,
+        source,
         fileSize,
-        m.constData(),
-        k.constData()));
+        metadataOutput,
+        keyframeOutput);
 }
 
 QJsonObject RustBridge::nearestKeyframe(const QJsonArray &keyframes, qint64 requestedMs)
 {
-    const QByteArray keys = jsonBytes(keyframes);
-    return decode(svr_nearest_keyframe(keys.constData(), requestedMs));
+    return invokeJsonI64(svr_nearest_keyframe, keyframes, requestedMs);
 }
 
 QJsonObject RustBridge::validateSegments(const QJsonArray &segments, const QJsonArray &keyframes)
 {
-    const QByteArray s = jsonBytes(segments);
-    const QByteArray k = jsonBytes(keyframes);
-    return decode(svr_validate_segments(s.constData(), k.constData()));
+    return invokeJsonJson(svr_validate_segments, segments, keyframes);
 }
 
 QJsonObject RustBridge::rewrapPreflight(
@@ -122,17 +179,13 @@ QJsonObject RustBridge::exportPlan(
     const QJsonArray &segments,
     const QJsonArray &keyframes)
 {
-    const QByteArray src = utf8(source);
-    const QByteArray out = utf8(output);
-    const QByteArray tmp = utf8(tempRoot);
-    const QByteArray s = jsonBytes(segments);
-    const QByteArray k = jsonBytes(keyframes);
-    return decode(svr_export_plan(
-        src.constData(),
-        out.constData(),
-        tmp.constData(),
-        s.constData(),
-        k.constData()));
+    return invokeQStrQStrQStrJsonJson(
+        svr_export_plan,
+        source,
+        output,
+        tempRoot,
+        segments,
+        keyframes);
 }
 
 QJsonObject RustBridge::projectJson(
@@ -140,16 +193,12 @@ QJsonObject RustBridge::projectJson(
     const QString &output,
     const QJsonArray &segments)
 {
-    const QByteArray src = utf8(source);
-    const QByteArray out = utf8(output);
-    const QByteArray s = jsonBytes(segments);
-    return decode(svr_project_json(src.constData(), out.constData(), s.constData()));
+    return invokeQStrQStrJson(svr_project_json, source, output, segments);
 }
 
 QJsonObject RustBridge::parseProjectJson(const QString &projectJson)
 {
-    const QByteArray p = utf8(projectJson);
-    return decode(svr_parse_project_json(p.constData()));
+    return invokeQStr1(svr_parse_project_json, projectJson);
 }
 
 QJsonObject RustBridge::rewrapReportTxt(
@@ -157,10 +206,7 @@ QJsonObject RustBridge::rewrapReportTxt(
     const QString &output,
     const QJsonArray &segments)
 {
-    const QByteArray src = utf8(source);
-    const QByteArray out = utf8(output);
-    const QByteArray s = jsonBytes(segments);
-    return decode(svr_rewrap_report_txt(src.constData(), out.constData(), s.constData()));
+    return invokeQStrQStrJson(svr_rewrap_report_txt, source, output, segments);
 }
 
 QJsonObject RustBridge::rewrapReportCsv(
@@ -168,10 +214,7 @@ QJsonObject RustBridge::rewrapReportCsv(
     const QString &output,
     const QJsonArray &segments)
 {
-    const QByteArray src = utf8(source);
-    const QByteArray out = utf8(output);
-    const QByteArray s = jsonBytes(segments);
-    return decode(svr_rewrap_report_csv(src.constData(), out.constData(), s.constData()));
+    return invokeQStrQStrJson(svr_rewrap_report_csv, source, output, segments);
 }
 
 RustBridge::Command RustBridge::commandFromJson(const QJsonObject &object)

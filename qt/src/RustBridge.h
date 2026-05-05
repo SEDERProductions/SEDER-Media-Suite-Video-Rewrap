@@ -51,8 +51,36 @@ public:
     static Command commandFromJson(const QJsonObject &object);
 
 private:
-    using FfiCall = char *(*)();
+    using FfiCallQStr1 = char *(*)(const char *);
+    using FfiCallQStr2Json1 = char *(*)(const char *, const char *, const char *);
+    using FfiCallJson1I64 = char *(*)(const char *, qint64);
+    using FfiCallQStr1I64 = char *(*)(const char *, qint64);
+    using FfiCallQStr1U64QStr2 = char *(*)(const char *, quint64, const char *, const char *);
+    using FfiCallJson2 = char *(*)(const char *, const char *);
+    using FfiCallQStr3Json2 = char *(*)(const char *, const char *, const char *, const char *, const char *);
 
     static QByteArray jsonBytes(const QJsonArray &array);
     static QJsonObject decode(char *raw);
+    static QJsonObject invokeQStr1(FfiCallQStr1 call, const QString &value);
+    static QJsonObject invokeQStrQStrJson(
+        FfiCallQStr2Json1 call,
+        const QString &first,
+        const QString &second,
+        const QJsonArray &array);
+    static QJsonObject invokeJsonI64(FfiCallJson1I64 call, const QJsonArray &array, qint64 value);
+    static QJsonObject invokeQStrI64(FfiCallQStr1I64 call, const QString &value, qint64 number);
+    static QJsonObject invokeQStrU64QStrQStr(
+        FfiCallQStr1U64QStr2 call,
+        const QString &first,
+        quint64 number,
+        const QString &second,
+        const QString &third);
+    static QJsonObject invokeJsonJson(FfiCallJson2 call, const QJsonArray &first, const QJsonArray &second);
+    static QJsonObject invokeQStrQStrQStrJsonJson(
+        FfiCallQStr3Json2 call,
+        const QString &first,
+        const QString &second,
+        const QString &third,
+        const QJsonArray &fourth,
+        const QJsonArray &fifth);
 };
