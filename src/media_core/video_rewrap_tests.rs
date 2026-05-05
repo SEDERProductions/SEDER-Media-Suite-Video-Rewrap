@@ -68,7 +68,10 @@ fn snaps_to_nearest_keyframe() {
 fn calculates_segment_and_total_duration() {
     let segments = vec![
         mk_segment("A", 1_000, 2_500),
-        RewrapSegment { enabled: false, ..mk_segment("B", 2_500, 8_000) },
+        RewrapSegment {
+            enabled: false,
+            ..mk_segment("B", 2_500, 8_000)
+        },
         mk_segment("C", 5_000, 8_000),
     ];
     assert_eq!(segment_duration(&segments[0]), 1_500);
@@ -77,10 +80,7 @@ fn calculates_segment_and_total_duration() {
 
 #[test]
 fn reorders_segments() {
-    let mut segments = vec![
-        mk_segment("A", 0, 1_000),
-        mk_segment("B", 1_000, 2_500),
-    ];
+    let mut segments = vec![mk_segment("A", 0, 1_000), mk_segment("B", 1_000, 2_500)];
     move_segment(&mut segments, 1, -1);
     assert_eq!(segments[0].name, "B");
 }
