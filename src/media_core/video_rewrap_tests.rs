@@ -272,3 +272,57 @@ fn known_keyframe_helper_uses_tolerance() {
     assert!(is_known_keyframe(&keys, 998));
     assert!(!is_known_keyframe(&keys, 1_005));
 }
+
+#[test]
+fn preflight_passes_for_matching_container_family() {
+    let metadata = VideoMetadata {
+        filename: "src.mov".into(),
+        duration_ms: Some(8_000),
+        container: Some("mov,mp4,m4a,3gp,3g2,mj2".into()),
+        width: Some(1920),
+        height: Some(1080),
+        codec: Some("h264".into()),
+        frame_rate: Some("30000/1001".into()),
+        file_size: 10,
+    };
+    let segments = vec![RewrapSegment {
+        name: "A".into(),
+        in_ms: 0,
+        out_ms: 1_000,
+        notes: String::new(),
+        enabled: true,
+    }];
+    let preflight =
+        rewrap_preflight(&metadata, &segments, &[0, 1_000], Path::new("/tmp/out.mp4")).unwrap();
+    assert!(preflight.container_match);
+    assert_eq!(preflight.container_extension, "mp4");
+}
+
+#[test]
+fn preflight_fails_for_container_mismatch_with_guidance() {
+    let metadata = VideoMetadata {
+        filename: "src.mov".into(),
+        duration_ms: Some(8_000),
+        container: Some("mov,mp4,m4a,3gp,3g2,mj2".into()),
+        width: Some(1920),
+        height: Some(1080),
+        codec: Some("h264".into()),
+        frame_rate: Some("30000/1001".into()),
+        file_size: 10,
+    };
+    let segments = vec![RewrapSegment {
+        name: "A".into(),
+        in_ms: 0,
+        out_ms: 1_000,
+        notes: String::new(),
+        enabled: true,
+    }];
+    let err =
+        rewrap_preflight(&metadata, &segments, &[0, 1_000], Path::new("/tmp/out.mkv")).unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("No re-encode fallback is available"));
+    assert!(err
+        .to_string()
+        .contains("Adjust container choice, stream layout, or source normalization"));
+}

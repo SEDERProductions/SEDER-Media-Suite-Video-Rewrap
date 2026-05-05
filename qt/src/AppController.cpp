@@ -243,6 +243,13 @@ void AppController::startExport()
         return;
     }
 
+    const QJsonObject preflight = RustBridge::rewrapPreflight(m_metadataJson, m_outputPath, m_segments->toJsonArray(), keyframesJson());
+    if (!preflight.value("ok").toBool()) {
+        setLogText(preflight.value("error").toString());
+        return;
+    }
+    setLogText("Preflight passed. No re-encode fallback is available; stream-copy export will proceed.");
+
     const QString tempRoot = QDir::temp().filePath(QStringLiteral("seder-video-rewrap-%1-%2")
         .arg(QCoreApplication::applicationPid())
         .arg(QDateTime::currentMSecsSinceEpoch()));
@@ -646,6 +653,7 @@ void AppController::probeSource(const QString &path)
 
 void AppController::clearMediaState()
 {
+    m_metadataJson = QJsonObject();
     m_keyframes.clear();
     m_currentIndex = 0;
     m_hasPendingIn = false;
@@ -663,6 +671,7 @@ void AppController::clearMediaState()
 
 void AppController::applyMetadata(const QJsonObject &metadata, const QJsonArray &keyframes)
 {
+    m_metadataJson = metadata;
     m_mediaFilename = metadata.value("filename").toString("Unknown");
     const QJsonValue duration = metadata.value("duration_ms");
     m_durationText = duration.isNull() ? QStringLiteral("N/A") : formatMs(static_cast<qint64>(duration.toDouble()));

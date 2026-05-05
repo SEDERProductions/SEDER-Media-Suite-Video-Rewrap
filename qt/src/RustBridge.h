@@ -25,6 +25,10 @@ public:
         const QString &keyframeOutput);
     static QJsonObject nearestKeyframe(const QJsonArray &keyframes, qint64 requestedMs);
     static QJsonObject validateSegments(const QJsonArray &segments, const QJsonArray &keyframes);
+    static QJsonObject rewrapPreflight(const QJsonObject &metadata,
+                                       const QString &output,
+                                       const QJsonArray &segments,
+                                       const QJsonArray &keyframes);
     static QJsonObject exportPlan(
         const QString &source,
         const QString &output,

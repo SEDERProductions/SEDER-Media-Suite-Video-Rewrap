@@ -146,6 +146,7 @@ private:
     QString m_codecText = "N/A";
     QString m_sizeText = "N/A";
     QString m_mediaSummary = "Open a video to inspect stream-copy-safe keyframes.";
+    QJsonObject m_metadataJson;
     QVector<qint64> m_keyframes;
     int m_currentIndex = 0;
     bool m_hasPendingIn = false;

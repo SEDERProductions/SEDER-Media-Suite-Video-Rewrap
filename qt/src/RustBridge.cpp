@@ -16,6 +16,11 @@ QByteArray RustBridge::jsonBytes(const QJsonArray &array)
     return QJsonDocument(array).toJson(QJsonDocument::Compact);
 }
 
+static QByteArray jsonObjectBytes(const QJsonObject &object)
+{
+    return QJsonDocument(object).toJson(QJsonDocument::Compact);
+}
+
 QJsonObject RustBridge::decode(char *raw)
 {
     if (!raw) {
@@ -95,6 +100,19 @@ QJsonObject RustBridge::validateSegments(const QJsonArray &segments, const QJson
     const QByteArray s = jsonBytes(segments);
     const QByteArray k = jsonBytes(keyframes);
     return decode(svr_validate_segments(s.constData(), k.constData()));
+}
+
+QJsonObject RustBridge::rewrapPreflight(
+    const QJsonObject &metadata,
+    const QString &output,
+    const QJsonArray &segments,
+    const QJsonArray &keyframes)
+{
+    const QByteArray m = jsonObjectBytes(metadata);
+    const QByteArray out = utf8(output);
+    const QByteArray s = jsonBytes(segments);
+    const QByteArray k = jsonBytes(keyframes);
+    return decode(svr_rewrap_preflight(m.constData(), out.constData(), s.constData(), k.constData()));
 }
 
 QJsonObject RustBridge::exportPlan(
