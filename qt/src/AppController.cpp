@@ -718,15 +718,21 @@ QString AppController::displayPath(const QString &path) const
 
 QString AppController::toolStatusText() const
 {
-    QStringList missing;
-    if (!m_ffmpegReady) missing.push_back("ffmpeg");
-    if (!m_ffprobeReady) missing.push_back("ffprobe");
-    if (!m_ffplayReady) missing.push_back("ffplay");
-    if (missing.isEmpty()) {
-        return "FFmpeg, FFprobe, and FFplay detected.";
-    }
-    return QStringLiteral("Missing %1. Install FFmpeg from ffmpeg.org or with Homebrew: brew install ffmpeg.")
-        .arg(missing.join(", "));
+    const bool exportReady = m_ffmpegReady && m_ffprobeReady;
+    const bool previewReady = m_ffplayReady;
+
+    const QString exportStatus = exportReady
+        ? QStringLiteral("Export Ready (ffmpeg + ffprobe).")
+        : QStringLiteral("Export Blocked (missing %1).")
+              .arg((!m_ffmpegReady && !m_ffprobeReady)
+                       ? QStringLiteral("ffmpeg, ffprobe")
+                       : (!m_ffmpegReady ? QStringLiteral("ffmpeg") : QStringLiteral("ffprobe")));
+    const QString previewStatus = previewReady
+        ? QStringLiteral("Preview Ready (ffplay).")
+        : QStringLiteral("Preview Limited (missing ffplay).");
+
+    return QStringLiteral("%1 %2 Install FFmpeg from ffmpeg.org or with Homebrew: brew install ffmpeg.")
+        .arg(exportStatus, previewStatus);
 }
 
 QJsonArray AppController::keyframesJson() const

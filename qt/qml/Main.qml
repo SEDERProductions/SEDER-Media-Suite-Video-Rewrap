@@ -151,9 +151,16 @@ ApplicationWindow {
                     }
                     MetaLabel { text: "VOL. 04 / KEYFRAME STREAM COPY" }
                 }
-                StatusPill {
-                    text: app.ffmpegReady && app.ffprobeReady ? "READY" : "MISSING"
-                    tone: app.ffmpegReady && app.ffprobeReady ? good : bad
+                RowLayout {
+                    spacing: 8
+                    StatusPill {
+                        text: app.ffmpegReady && app.ffprobeReady ? "EXPORT READY" : "EXPORT BLOCKED"
+                        tone: app.ffmpegReady && app.ffprobeReady ? good : bad
+                    }
+                    StatusPill {
+                        text: app.ffplayReady ? "PREVIEW READY" : "PREVIEW LIMITED"
+                        tone: app.ffplayReady ? good : warn
+                    }
                 }
             }
         }
@@ -207,8 +214,12 @@ ApplicationWindow {
                     RowLayout {
                         CommandButton { text: "Recheck FFmpeg"; onClicked: app.recheckTools() }
                         StatusPill {
-                            text: app.ffmpegReady && app.ffprobeReady ? "READY" : "MISSING"
+                            text: app.ffmpegReady && app.ffprobeReady ? "EXPORT READY" : "EXPORT BLOCKED"
                             tone: app.ffmpegReady && app.ffprobeReady ? good : bad
+                        }
+                        StatusPill {
+                            text: app.ffplayReady ? "PREVIEW READY" : "PREVIEW LIMITED"
+                            tone: app.ffplayReady ? good : warn
                         }
                     }
                     PathLabel { text: app.logText; Layout.fillWidth: true; wrapMode: Text.Wrap }

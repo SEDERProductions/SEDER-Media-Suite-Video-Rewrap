@@ -1,6 +1,10 @@
 #include "SegmentTableModel.h"
+#define private public
+#include "AppController.h"
+#undef private
 
 #include <QByteArray>
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -94,6 +98,38 @@ private slots:
         QCOMPARE(process.exitCode(), 0);
         QCOMPARE(stdoutBuf.size(), 512 * 1024);
 #endif
+    }
+
+    void toolStatusText_distinguishesExportAndPreviewReadiness()
+    {
+        SegmentTableModel model;
+        AppController controller(&model);
+        controller.m_ffmpegReady = true;
+        controller.m_ffprobeReady = true;
+        controller.m_ffplayReady = false;
+
+        const QString status = controller.toolStatusText();
+        QVERIFY(status.contains("Export Ready", Qt::CaseSensitive));
+        QVERIFY(status.contains("Preview Limited", Qt::CaseSensitive));
+        QVERIFY(!status.contains("Export Blocked", Qt::CaseSensitive));
+    }
+
+    void ensureCanExport_ignoresMissingFfplay()
+    {
+        SegmentTableModel model;
+        model.append(SegmentRow { "A", 0, 1000, "", true });
+        AppController controller(&model);
+
+        controller.m_ffmpegReady = true;
+        controller.m_ffprobeReady = true;
+        controller.m_ffplayReady = false;
+        controller.m_lastToolCheckMs = QDateTime::currentMSecsSinceEpoch();
+        controller.setSourcePath("/tmp/source.mov");
+        controller.setOutputPath("/tmp/out.mov");
+        controller.m_keyframes = { 0, 1000, 2000 };
+
+        QVERIFY(controller.ensureCanExport());
+        QVERIFY(controller.logText().isEmpty() || !controller.logText().contains("missing ffplay", Qt::CaseInsensitive));
     }
 };
 
