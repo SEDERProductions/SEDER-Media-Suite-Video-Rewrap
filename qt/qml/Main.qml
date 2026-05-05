@@ -91,8 +91,6 @@ ApplicationWindow {
             color: commandButton.enabled
                 ? (commandButton.primary ? root.accent : root.panelAlt)
                 : Qt.rgba(root.faint.r, root.faint.g, root.faint.b, 0.18)
-            border.color: commandButton.primary ? "transparent" : root.line
-            border.width: commandButton.primary ? 0 : 1
             border.color: commandButton.activeFocus ? root.accent : (commandButton.primary ? "transparent" : root.line)
             border.width: commandButton.activeFocus ? 2 : (commandButton.primary ? 0 : 1)
         }
