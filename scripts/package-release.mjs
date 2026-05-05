@@ -171,6 +171,51 @@ function createMacBundle(executable, outputRoot) {
   return bundle;
 }
 
+function findVcRedistDlls() {
+  const dllNames = ['msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'];
+  const found = [];
+  // Search Visual Studio redist directories (GitHub Actions / dev machines)
+  const vsPaths = [
+    'C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Redist\\MSVC',
+    'C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Redist\\MSVC',
+    'C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional\\VC\\Redist\\MSVC',
+    'C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Redist\\MSVC',
+    'C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\Community\\VC\\Redist\\MSVC',
+    'C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\Professional\\VC\\Redist\\MSVC',
+  ];
+  for (const vsPath of vsPaths) {
+    if (!existsSync(vsPath)) continue;
+    const versions = readdirSync(vsPath);
+    for (const versionDir of versions.sort().reverse()) {
+      const archDir = join(vsPath, versionDir, 'x64');
+      if (!existsSync(archDir)) continue;
+      let allFound = true;
+      for (const dll of dllNames) {
+        const p = join(archDir, dll);
+        if (!existsSync(p)) { allFound = false; break; }
+      }
+      if (allFound) {
+        for (const dll of dllNames) found.push(join(archDir, dll));
+        return found;
+      }
+    }
+  }
+  // Fallback to System32 (already-installed runtimes)
+  const sys32 = 'C:\\Windows\\System32';
+  if (existsSync(sys32)) {
+    let allFound = true;
+    for (const dll of dllNames) {
+      const p = join(sys32, dll);
+      if (!existsSync(p)) { allFound = false; break; }
+    }
+    if (allFound) {
+      for (const dll of dllNames) found.push(join(sys32, dll));
+      return found;
+    }
+  }
+  return [];
+}
+
 function packageWindows(executable, outputRoot) {
   const stage = join(outputRoot, `${app.packageName}-v${version}-windows-${platformInfo().architecture}`);
   rmSync(stage, { recursive: true, force: true });
@@ -182,6 +227,15 @@ function packageWindows(executable, outputRoot) {
   execFileSync(windeployqt, ['--release', '--qmldir', join(root, 'qt', 'qml'), join(stage, `${app.packageName}.exe`)], {
     stdio: 'inherit',
   });
+  const vcDlls = findVcRedistDlls();
+  if (vcDlls.length > 0) {
+    console.log(`[package] Copying VC++ runtime DLLs to ${stage}`);
+    for (const dll of vcDlls) {
+      copyFileSync(dll, join(stage, basename(dll)));
+    }
+  } else {
+    console.warn('[package] VC++ runtime DLLs not found. The app may crash on machines without Visual C++ Redistributables installed.');
+  }
   try {
     signWindowsExecutables(stage);
   } catch (err) {
@@ -200,6 +254,8 @@ function signWindowsExecutables(dir) {
     $ErrorActionPreference = 'Stop'
     $stageDir = $env:SEDER_SIGN_DIR
     if (-not $stageDir) { throw 'SEDER_SIGN_DIR not set' }
+    # Guard against environments where the Cert: drive is unavailable
+    if (-not (Get-PSDrive Cert -ErrorAction SilentlyContinue)) { throw 'Cert: drive is not available' }
     $cert = New-SelfSignedCertificate \`
       -Subject 'CN=SEDER Productions, O=SEDER Productions, C=GB' \`
       -Type CodeSigningCert -KeyUsage DigitalSignature \`
