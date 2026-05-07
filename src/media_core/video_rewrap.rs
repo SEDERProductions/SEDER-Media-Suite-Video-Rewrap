@@ -139,13 +139,23 @@ pub fn rewrap_preflight(
     })
 }
 
+fn finite_non_negative_seconds(seconds: f64, field: &str) -> Result<f64> {
+    if !seconds.is_finite() || seconds < 0.0 {
+        anyhow::bail!("{field} must be a finite non-negative value");
+    }
+    Ok(seconds)
+}
+
 pub fn parse_timecode_to_ms(value: &str) -> Result<i64> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         anyhow::bail!("Timecode is empty");
     }
     if !trimmed.contains(':') {
-        let seconds = trimmed.parse::<f64>().context("Invalid seconds value")?;
+        let seconds = finite_non_negative_seconds(
+            trimmed.parse::<f64>().context("Invalid seconds value")?,
+            "Seconds",
+        )?;
         return Ok((seconds * 1000.0).round() as i64);
     }
     let parts = trimmed.split(':').collect::<Vec<_>>();
@@ -153,8 +163,20 @@ pub fn parse_timecode_to_ms(value: &str) -> Result<i64> {
         anyhow::bail!("Use HH:MM:SS.mmm timecode");
     }
     let hours = parts[0].parse::<i64>().context("Invalid hours")?;
+    if hours < 0 {
+        anyhow::bail!("Hours must be non-negative");
+    }
     let minutes = parts[1].parse::<i64>().context("Invalid minutes")?;
-    let seconds = parts[2].parse::<f64>().context("Invalid seconds")?;
+    if !(0..60).contains(&minutes) {
+        anyhow::bail!("Minutes must be between 0 and 59");
+    }
+    let seconds = finite_non_negative_seconds(
+        parts[2].parse::<f64>().context("Invalid seconds")?,
+        "Seconds",
+    )?;
+    if seconds >= 60.0 {
+        anyhow::bail!("Seconds must be less than 60");
+    }
     Ok((((hours * 60 + minutes) * 60) * 1000) + (seconds * 1000.0).round() as i64)
 }
 
@@ -178,6 +200,7 @@ pub fn parse_ffprobe_keyframes(output: &str) -> Vec<i64> {
             trimmed
                 .parse::<f64>()
                 .ok()
+                .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
                 .map(|seconds| (seconds * 1000.0).round() as i64)
         })
         .collect::<Vec<_>>();
@@ -227,11 +250,11 @@ pub fn nearest_keyframe(keyframes: &[i64], requested_ms: i64) -> Option<SnapResu
     keyframes
         .iter()
         .copied()
-        .min_by_key(|candidate| (candidate - requested_ms).abs())
+        .min_by_key(|candidate| candidate.abs_diff(requested_ms))
         .map(|snapped_ms| SnapResult {
             requested_ms,
             snapped_ms,
-            distance_ms: (snapped_ms - requested_ms).abs(),
+            distance_ms: snapped_ms.abs_diff(requested_ms).min(i64::MAX as u64) as i64,
         })
 }
 
@@ -252,7 +275,7 @@ pub const KEYFRAME_TOLERANCE_MS: i64 = 2;
 pub fn is_known_keyframe(keyframes: &[i64], ms: i64) -> bool {
     keyframes
         .iter()
-        .any(|candidate| (candidate - ms).abs() <= KEYFRAME_TOLERANCE_MS)
+        .any(|candidate| candidate.abs_diff(ms) <= KEYFRAME_TOLERANCE_MS as u64)
 }
 
 pub fn validate_segment(segment: &RewrapSegment, keyframes: &[i64]) -> Result<()> {
@@ -316,6 +339,7 @@ pub fn ffprobe_metadata_command(source: &Path) -> ProcessCommand {
         program: "ffprobe".into(),
         args: vec![
             "-v".into(), "error".into(),
+            "-select_streams".into(), "v:0".into(),
             "-show_entries".into(), "format=format_name,duration:stream=codec_name,width,height,avg_frame_rate,r_frame_rate".into(),
             "-of".into(), "default=noprint_wrappers=1".into(),
             source.to_string_lossy().to_string(),

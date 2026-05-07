@@ -97,6 +97,7 @@ void AppController::recheckTools()
     m_ffplayReady = programExists("ffplay");
     m_lastToolCheckMs = QDateTime::currentMSecsSinceEpoch();
     emit toolsChanged();
+    setLogText(toolStatusText());
 }
 
 // programExists() runs three blocking QProcess "-version" probes that can stack
@@ -273,7 +274,15 @@ void AppController::startExport()
     setLogText("Exporting with FFmpeg stream copy only...");
 
     QThread *worker = QThread::create([this, tempRoot, plan] {
-        QDir().mkpath(tempRoot);
+        if (!QDir().mkpath(tempRoot)) {
+            QMetaObject::invokeMethod(this, [this, tempRoot] {
+                setBusy(false);
+                setProgress(0.0);
+                setLogText(QStringLiteral("Unable to create temporary export folder: %1")
+                    .arg(displayPath(tempRoot)));
+            }, Qt::QueuedConnection);
+            return;
+        }
         const QJsonArray plannedSegments = plan.value("segments").toArray();
         for (int i = 0; i < plannedSegments.size(); ++i) {
             if (m_cancelExport) {
@@ -318,7 +327,30 @@ void AppController::startExport()
             }, Qt::QueuedConnection);
             return;
         }
-        listFile.write(plan.value("listText").toString().toUtf8());
+        const QByteArray listBytes = plan.value("listText").toString().toUtf8();
+        if (listFile.write(listBytes) != listBytes.size()) {
+            const QString error = listFile.errorString();
+            listFile.close();
+            QDir(tempRoot).removeRecursively();
+            QMetaObject::invokeMethod(this, [this, error] {
+                setBusy(false);
+                setProgress(0.0);
+                setLogText(QStringLiteral("Unable to write concat list: %1").arg(error));
+            }, Qt::QueuedConnection);
+            return;
+        }
+        listFile.flush();
+        if (listFile.error() != QFileDevice::NoError) {
+            const QString error = listFile.errorString();
+            listFile.close();
+            QDir(tempRoot).removeRecursively();
+            QMetaObject::invokeMethod(this, [this, error] {
+                setBusy(false);
+                setProgress(0.0);
+                setLogText(QStringLiteral("Unable to flush concat list: %1").arg(error));
+            }, Qt::QueuedConnection);
+            return;
+        }
         listFile.close();
 
         QMetaObject::invokeMethod(this, [this] {
