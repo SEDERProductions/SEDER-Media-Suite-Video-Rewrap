@@ -48,15 +48,15 @@ ApplicationWindow {
     readonly property bool dark: app.darkMode
     readonly property color bg: dark ? "#12110f" : "#ece6d9"
     readonly property color panel: dark ? "#1f1d1a" : "#f8f4ea"
-    readonly property color panelAlt: dark ? "#282521" : "#e3dccb"
+    readonly property color panelAlt: dark ? "#302c27" : "#d8d0be"
     readonly property color ink: dark ? "#ece6d9" : "#16140f"
-    readonly property color muted: dark ? "#ada596" : "#4a4438"
-    readonly property color faint: dark ? "#716a5f" : "#7a7363"
-    readonly property color line: dark ? "#3a352d" : "#d6cfbe"
+    readonly property color muted: dark ? "#c8bfaf" : "#3f392f"
+    readonly property color faint: dark ? "#978d7d" : "#5f584c"
+    readonly property color line: dark ? "#5a5247" : "#b8af9c"
     readonly property color accent: "#c63b13"
-    readonly property color good: dark ? "#4cab7e" : "#1f7a4d"
-    readonly property color warn: dark ? "#c99746" : "#9a6a16"
-    readonly property color bad: dark ? "#d25645" : "#b43a1f"
+    readonly property color good: dark ? "#67c89a" : "#16663f"
+    readonly property color warn: dark ? "#e2b667" : "#85580b"
+    readonly property color bad: dark ? "#e37a6b" : "#963018"
     readonly property string uiFontFamily: Qt.application.font.family
     readonly property string monoFontFamily: Qt.platform.os === "osx"
         ? "Menlo"
@@ -93,16 +93,17 @@ ApplicationWindow {
         id: statusPill
         property string text: ""
         property color tone: root.faint
+        property string stateIcon: "\u2022"
         implicitHeight: 24
-        implicitWidth: label.implicitWidth + 18
+        implicitWidth: label.implicitWidth + 20
         radius: 12
-        color: Qt.rgba(tone.r, tone.g, tone.b, 0.12)
-        border.color: Qt.rgba(tone.r, tone.g, tone.b, 0.55)
+        color: Qt.rgba(tone.r, tone.g, tone.b, root.dark ? 0.22 : 0.16)
+        border.color: Qt.rgba(tone.r, tone.g, tone.b, root.dark ? 0.9 : 0.72)
         border.width: 1
         Label {
             id: label
             anchors.centerIn: parent
-            text: "\u25cf " + statusPill.text
+            text: statusPill.stateIcon + " " + statusPill.text
             color: statusPill.tone
             font.family: root.monoFontFamily
             font.styleHint: Font.Monospace
@@ -118,13 +119,16 @@ ApplicationWindow {
         padding: 10
         font.pixelSize: 13
         font.family: root.uiFontFamily
-        palette.buttonText: primary ? "white" : root.ink
+        palette.buttonText: primary ? "white" : (commandButton.enabled ? root.ink : root.muted)
+        opacity: commandButton.enabled ? 1.0 : 0.62
         background: Rectangle {
             radius: 5
             color: commandButton.enabled
                 ? (commandButton.primary ? root.accent : root.panelAlt)
-                : Qt.rgba(root.faint.r, root.faint.g, root.faint.b, 0.18)
-            border.color: commandButton.primary ? "transparent" : root.line
+                : (root.dark ? "#2a2620" : "#ddd4c1")
+            border.color: commandButton.enabled
+                ? (commandButton.primary ? "transparent" : root.line)
+                : root.line
             border.width: commandButton.primary ? 0 : 1
         }
     }
@@ -461,12 +465,21 @@ ApplicationWindow {
                                     required property int row
                                     required property int column
                                     required property string display
-                                    color: row === app.selectedRow ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.16)
+                                    color: row === app.selectedRow ? (root.dark ? "#3f251d" : "#f2d6c8")
                                                                     : (row % 2 === 0 ? root.panel : root.panelAlt)
-                                    border.color: root.line
+                                    border.color: row === app.selectedRow ? root.accent : root.line
+                                    border.width: row === app.selectedRow ? 2 : 1
+                                    Rectangle {
+                                        anchors.left: parent.left
+                                        anchors.top: parent.top
+                                        anchors.bottom: parent.bottom
+                                        width: row === app.selectedRow ? 5 : 0
+                                        color: root.accent
+                                        visible: row === app.selectedRow
+                                    }
                                     Text {
                                         anchors.fill: parent
-                                        anchors.leftMargin: 8
+                                        anchors.leftMargin: row === app.selectedRow ? 12 : 8
                                         anchors.rightMargin: 8
                                         verticalAlignment: Text.AlignVCenter
                                         text: display
