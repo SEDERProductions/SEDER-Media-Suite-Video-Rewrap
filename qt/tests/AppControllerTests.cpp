@@ -4,6 +4,8 @@
 
 #include "SegmentTableModel.h"
 
+#include <QCoreApplication>
+#include <QGuiApplication>
 #include <QTemporaryDir>
 #include <QFile>
 #include <QtTest/QtTest>
@@ -32,6 +34,9 @@ private slots:
 
     void recheckToolsCached_forceBypassesCache()
     {
+        if (!qobject_cast<QGuiApplication *>(QCoreApplication::instance()))
+            QSKIP("QGuiApplication is required for process probing");
+
         SegmentTableModel model;
         AppController controller(&model);
 
