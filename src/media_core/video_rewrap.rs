@@ -154,6 +154,7 @@ pub fn rewrap_preflight(
             "Normalize the source with an explicit transcode/remux pass before using segment rewrap.".into(),
         ],
     })
+}
 
 fn finite_non_negative_seconds(seconds: f64, field: &str) -> Result<f64> {
     if !seconds.is_finite() || seconds < 0.0 {
