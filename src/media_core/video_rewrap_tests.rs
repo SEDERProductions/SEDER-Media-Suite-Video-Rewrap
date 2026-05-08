@@ -40,6 +40,12 @@ fn parses_ffprobe_keyframe_output() {
 }
 
 #[test]
+fn ignores_invalid_ffprobe_keyframe_values() {
+    let parsed = parse_ffprobe_keyframes("0.000000\nNaN\ninf\n-1.000000\n1.250000\n");
+    assert_eq!(parsed, vec![0, 1_250]);
+}
+
+#[test]
 fn parses_ffprobe_metadata() {
     let output = "format_name=mov,mp4,m4a,3gp,3g2,mj2\nduration=12.345000\ncodec_name=h264\nwidth=1920\nheight=1080\navg_frame_rate=24000/1001\n";
     let meta = parse_ffprobe_metadata(output, Path::new("/tmp/interview.mov"), 99);
@@ -58,10 +64,26 @@ fn parses_and_formats_timecode() {
 }
 
 #[test]
+fn rejects_invalid_timecode_ranges() {
+    assert!(parse_timecode_to_ms("-1").is_err());
+    assert!(parse_timecode_to_ms("nan").is_err());
+    assert!(parse_timecode_to_ms("00:60:00.000").is_err());
+    assert!(parse_timecode_to_ms("00:00:60.000").is_err());
+}
+
+#[test]
 fn snaps_to_nearest_keyframe() {
     let snap = nearest_keyframe(&mk_keyframes(&DEFAULT_KEYFRAMES), 2_100).unwrap();
     assert_eq!(snap.snapped_ms, 2_500);
     assert_eq!(snap.distance_ms, 400);
+}
+
+#[test]
+fn keyframe_distance_handles_extreme_values() {
+    let snap = nearest_keyframe(&[i64::MAX], i64::MIN).unwrap();
+    assert_eq!(snap.snapped_ms, i64::MAX);
+    assert_eq!(snap.distance_ms, i64::MAX);
+    assert!(!is_known_keyframe(&[i64::MAX], i64::MIN));
 }
 
 #[test]
@@ -96,6 +118,12 @@ fn validates_invalid_segments() {
 #[test]
 fn generates_ffmpeg_commands_without_shell_strings() {
     let segment = mk_segment("A", 1_000, 2_500);
+    let metadata_command = ffprobe_metadata_command(Path::new("/media/source.mov"));
+    assert!(metadata_command
+        .args
+        .contains(&"-select_streams".to_string()));
+    assert!(metadata_command.args.contains(&"v:0".to_string()));
+
     let command = ffmpeg_segment_command(
         Path::new("/media/source.mov"),
         &segment,
