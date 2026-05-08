@@ -2,8 +2,35 @@ use super::video_rewrap::*;
 use std::path::Path;
 use tempfile::tempdir;
 
-fn keys() -> Vec<i64> {
-    vec![0, 1_000, 2_500, 5_000, 8_000]
+const DEFAULT_KEYFRAMES: [i64; 5] = [0, 1_000, 2_500, 5_000, 8_000];
+const DRIFTED_KEYFRAMES: [i64; 3] = [0, 1_000, 2_001];
+const LEGACY_PROJECT_JSON: &str = r#"{
+        "source_file": "src.mov",
+        "output_file": "out.mov",
+        "segments": [
+            {"name": "A", "in_ms": 0, "out_ms": 1000, "notes": "", "enabled": true}
+        ]
+    }"#;
+
+fn mk_keyframes(values: &[i64]) -> Vec<i64> {
+    values.to_vec()
+}
+
+fn mk_segment(name: &str, in_ms: i64, out_ms: i64) -> RewrapSegment {
+    RewrapSegment {
+        name: name.into(),
+        in_ms,
+        out_ms,
+        notes: String::new(),
+        enabled: true,
+    }
+}
+
+fn mk_segment_with_notes(name: &str, in_ms: i64, out_ms: i64, notes: &str) -> RewrapSegment {
+    RewrapSegment {
+        notes: notes.into(),
+        ..mk_segment(name, in_ms, out_ms)
+    }
 }
 
 #[test]
@@ -32,7 +59,7 @@ fn parses_and_formats_timecode() {
 
 #[test]
 fn snaps_to_nearest_keyframe() {
-    let snap = nearest_keyframe(&keys(), 2_100).unwrap();
+    let snap = nearest_keyframe(&mk_keyframes(&DEFAULT_KEYFRAMES), 2_100).unwrap();
     assert_eq!(snap.snapped_ms, 2_500);
     assert_eq!(snap.distance_ms, 400);
 }
@@ -40,27 +67,12 @@ fn snaps_to_nearest_keyframe() {
 #[test]
 fn calculates_segment_and_total_duration() {
     let segments = vec![
+        mk_segment("A", 1_000, 2_500),
         RewrapSegment {
-            name: "A".into(),
-            in_ms: 1_000,
-            out_ms: 2_500,
-            notes: String::new(),
-            enabled: true,
-        },
-        RewrapSegment {
-            name: "B".into(),
-            in_ms: 2_500,
-            out_ms: 8_000,
-            notes: String::new(),
             enabled: false,
+            ..mk_segment("B", 2_500, 8_000)
         },
-        RewrapSegment {
-            name: "C".into(),
-            in_ms: 5_000,
-            out_ms: 8_000,
-            notes: String::new(),
-            enabled: true,
-        },
+        mk_segment("C", 5_000, 8_000),
     ];
     assert_eq!(segment_duration(&segments[0]), 1_500);
     assert_eq!(total_enabled_duration(&segments), 4_500);
@@ -68,59 +80,26 @@ fn calculates_segment_and_total_duration() {
 
 #[test]
 fn reorders_segments() {
-    let mut segments = vec![
-        RewrapSegment {
-            name: "A".into(),
-            in_ms: 0,
-            out_ms: 1_000,
-            notes: String::new(),
-            enabled: true,
-        },
-        RewrapSegment {
-            name: "B".into(),
-            in_ms: 1_000,
-            out_ms: 2_500,
-            notes: String::new(),
-            enabled: true,
-        },
-    ];
+    let mut segments = vec![mk_segment("A", 0, 1_000), mk_segment("B", 1_000, 2_500)];
     move_segment(&mut segments, 1, -1);
     assert_eq!(segments[0].name, "B");
 }
 
 #[test]
 fn validates_invalid_segments() {
-    let bad = RewrapSegment {
-        name: "Bad".into(),
-        in_ms: 1_200,
-        out_ms: 2_500,
-        notes: String::new(),
-        enabled: true,
-    };
-    assert!(validate_segment(&bad, &keys()).is_err());
-    let reversed = RewrapSegment {
-        name: "Reversed".into(),
-        in_ms: 2_500,
-        out_ms: 1_000,
-        notes: String::new(),
-        enabled: true,
-    };
-    assert!(validate_segment(&reversed, &keys()).is_err());
+    let bad = mk_segment("Bad", 1_200, 2_500);
+    assert!(validate_segment(&bad, &mk_keyframes(&DEFAULT_KEYFRAMES)).is_err());
+    let reversed = mk_segment("Reversed", 2_500, 1_000);
+    assert!(validate_segment(&reversed, &mk_keyframes(&DEFAULT_KEYFRAMES)).is_err());
 }
 
 #[test]
 fn generates_ffmpeg_commands_without_shell_strings() {
-    let segment = RewrapSegment {
-        name: "A".into(),
-        in_ms: 1_000,
-        out_ms: 2_500,
-        notes: String::new(),
-        enabled: true,
-    };
+    let segment = mk_segment("A", 1_000, 2_500);
     let command = ffmpeg_segment_command(
         Path::new("/media/source.mov"),
         &segment,
-        &keys(),
+        &mk_keyframes(&DEFAULT_KEYFRAMES),
         Path::new("/tmp/out.mov"),
     );
     assert_eq!(command.program, "ffmpeg");
@@ -131,13 +110,7 @@ fn generates_ffmpeg_commands_without_shell_strings() {
 
 #[test]
 fn generates_reports() {
-    let segments = vec![RewrapSegment {
-        name: "Moment".into(),
-        in_ms: 1_000,
-        out_ms: 2_500,
-        notes: "keeper".into(),
-        enabled: true,
-    }];
+    let segments = vec![mk_segment_with_notes("Moment", 1_000, 2_500, "keeper")];
     let txt = rewrap_report_txt(Path::new("source.mov"), Path::new("out.mov"), &segments);
     let csv = rewrap_report_csv(Path::new("source.mov"), Path::new("out.mov"), &segments);
     assert!(txt.contains("keyframe-aligned stream copy"));
@@ -152,13 +125,7 @@ fn saves_and_loads_project() {
         version: CURRENT_PROJECT_VERSION,
         source_file: "source.mov".into(),
         output_file: "out.mov".into(),
-        segments: vec![RewrapSegment {
-            name: "A".into(),
-            in_ms: 0,
-            out_ms: 1_000,
-            notes: String::new(),
-            enabled: true,
-        }],
+        segments: vec![mk_segment("A", 0, 1_000)],
     };
     save_project(&path, &project).unwrap();
     assert_eq!(load_project(&path).unwrap(), project);
@@ -167,44 +134,26 @@ fn saves_and_loads_project() {
 #[test]
 fn keyframe_validation_tolerates_2ms_drift() {
     // Real keyframes from ffprobe round-tripped through f64 → i64 ms.
-    let keyframes = vec![0_i64, 1_000, 2_001];
+    let keyframes = mk_keyframes(&DRIFTED_KEYFRAMES);
     // User snapped via UI; due to FP rounding the segment landed 1ms away.
-    let segment = RewrapSegment {
-        name: "Drifted".into(),
-        in_ms: 999,
-        out_ms: 2_000,
-        notes: String::new(),
-        enabled: true,
-    };
+    let segment = mk_segment("Drifted", 999, 2_000);
     assert!(validate_segment(&segment, &keyframes).is_ok());
 }
 
 #[test]
 fn keyframe_validation_rejects_off_by_more_than_tolerance() {
-    let keyframes = vec![0_i64, 1_000, 2_001];
-    let segment = RewrapSegment {
-        name: "Off".into(),
-        in_ms: 996, // 4ms from 1000 — outside the 2ms tolerance
-        out_ms: 2_001,
-        notes: String::new(),
-        enabled: true,
-    };
+    let keyframes = mk_keyframes(&DRIFTED_KEYFRAMES);
+    let segment = mk_segment("Off", 996, 2_001); // 4ms from 1000 — outside the 2ms tolerance
     assert!(validate_segment(&segment, &keyframes).is_err());
 }
 
 #[test]
 fn ffmpeg_segment_args_use_duration_and_stable_seek() {
-    let segment = RewrapSegment {
-        name: "A".into(),
-        in_ms: 1_000,
-        out_ms: 2_500,
-        notes: String::new(),
-        enabled: true,
-    };
+    let segment = mk_segment("A", 1_000, 2_500);
     let cmd = ffmpeg_segment_command(
         Path::new("/media/src.mov"),
         &segment,
-        &keys(),
+        &mk_keyframes(&DEFAULT_KEYFRAMES),
         Path::new("/tmp/out.mov"),
     );
     let args = cmd.args.join(" ");
@@ -224,14 +173,7 @@ fn ffmpeg_segment_args_use_duration_and_stable_seek() {
 #[test]
 fn project_loads_old_save_without_version_field() {
     // A project saved by an older build (pre-F9) had no `version` field.
-    let legacy_json = r#"{
-        "source_file": "src.mov",
-        "output_file": "out.mov",
-        "segments": [
-            {"name": "A", "in_ms": 0, "out_ms": 1000, "notes": "", "enabled": true}
-        ]
-    }"#;
-    let project: RewrapProject = serde_json::from_str(legacy_json).unwrap();
+    let project: RewrapProject = serde_json::from_str(LEGACY_PROJECT_JSON).unwrap();
     assert_eq!(project.version, CURRENT_PROJECT_VERSION);
     assert_eq!(project.source_file, "src.mov");
     assert_eq!(project.segments.len(), 1);
@@ -240,17 +182,11 @@ fn project_loads_old_save_without_version_field() {
 #[test]
 fn ffmpeg_segment_snaps_drifted_input_to_actual_keyframes() {
     // Real keyframes round-tripped through f64 → i64 ms.
-    let keyframes = vec![0_i64, 1_000, 2_001];
+    let keyframes = mk_keyframes(&DRIFTED_KEYFRAMES);
     // User-supplied values 1ms below the real keyframes — within validation
     // tolerance, but if passed verbatim to ffmpeg's -ss with -noaccurate_seek
     // they would land on the *previous* keyframe and silently shift content.
-    let segment = RewrapSegment {
-        name: "Drifted".into(),
-        in_ms: 999,
-        out_ms: 2_000,
-        notes: String::new(),
-        enabled: true,
-    };
+    let segment = mk_segment("Drifted", 999, 2_000);
     let cmd = ffmpeg_segment_command(
         Path::new("/media/src.mov"),
         &segment,
@@ -267,7 +203,7 @@ fn ffmpeg_segment_snaps_drifted_input_to_actual_keyframes() {
 
 #[test]
 fn known_keyframe_helper_uses_tolerance() {
-    let keys = vec![0_i64, 1_000, 2_001];
+    let keys = mk_keyframes(&DRIFTED_KEYFRAMES);
     assert!(is_known_keyframe(&keys, 1_002));
     assert!(is_known_keyframe(&keys, 998));
     assert!(!is_known_keyframe(&keys, 1_005));
