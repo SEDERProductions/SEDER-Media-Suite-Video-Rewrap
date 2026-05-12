@@ -102,19 +102,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential cmake ninja-build wget zip \
+            build-essential cmake ninja-build zip \
             libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 \
             libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
             libxcb-render-util0 libxcb-xinerama0
-
-      - name: Install Linux AppImage tooling
-        if: runner.os == 'Linux'
-        run: |
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
-          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
-          sudo mv linuxdeploy-x86_64.AppImage /usr/local/bin/linuxdeploy-x86_64.AppImage
-          sudo mv linuxdeploy-plugin-qt-x86_64.AppImage /usr/local/bin/linuxdeploy-plugin-qt-x86_64.AppImage
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -178,26 +169,7 @@ jobs:
         run: |
           name="seder-video-rewrap-${{ steps.vars.outputs.tag }}-linux-x64"
           mkdir -p release
-          echo "dist contents:"
-          find dist -type f | head -20
-          if [ -f /usr/local/bin/linuxdeploy-x86_64.AppImage ]; then
-            export APPIMAGE_EXTRACT_AND_RUN=1
-            mkdir -p "$name/usr/bin" "$name/usr/share/applications"
-            exe=$(find dist -name seder-video-rewrap -type f -not -name '*.o.d' -print -quit)
-            if [ -z "$exe" ]; then echo "No executable found in dist"; exit 1; fi
-            cp "$exe" "$name/usr/bin/"
-            printf '[Desktop Entry]\nType=Application\nName=SEDER Media Suite Video Rewrap\nExec=seder-video-rewrap\nCategories=AudioVideo;\nTerminal=false\n' \
-              > "$name/usr/share/applications/seder-video-rewrap.desktop"
-            /usr/local/bin/linuxdeploy-x86_64.AppImage --appdir "$name" \
-              --plugin qt --output appimage || true
-            appimage=$(find . -maxdepth 1 -name '*.AppImage' -print -quit)
-            if [ -n "$appimage" ]; then
-              mv "$appimage" "release/$name.AppImage"
-            fi
-          fi
-          if [ ! -f "release/$name.AppImage" ] && [ ! -f "release/$name.zip" ]; then
-            cd dist && zip -r "../release/$name.zip" .
-          fi
+          cd dist && zip -r "../release/$name.zip" .
 
       - name: Generate checksums
         shell: bash
