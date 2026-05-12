@@ -45,6 +45,7 @@ qt_add_executable(seder-video-rewrap
     src/ProcessUtil.cpp
     src/RustBridge.cpp
     src/SegmentTableModel.cpp
+    resources.qrc
     ${SEDER_APP_PLATFORM_SOURCES}
 )
 
