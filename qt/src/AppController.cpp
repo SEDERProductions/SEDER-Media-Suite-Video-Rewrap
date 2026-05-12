@@ -94,13 +94,6 @@ AppController::AppController(SegmentTableModel *segments, QObject *parent)
     QSettings settings;
     m_theme = settings.value("theme", "system").toString();
     setTheme(m_theme);
-    if (QGuiApplication::instance()) {
-        connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this, [this] {
-            if (m_theme == "system") {
-                setTheme("system");
-            }
-        });
-    }
     m_probeEngine->recheckBackground();
 
     // Clean up preview processes on exit
@@ -558,8 +551,7 @@ void AppController::toggleSegment(int row, bool enabled)
 void AppController::setTheme(const QString &theme)
 {
     const QString normalized = (theme == "light" || theme == "dark") ? theme : QStringLiteral("system");
-    const bool dark = normalized == "dark"
-        || (normalized == "system" && QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark);
+    const bool dark = normalized == "dark";
     const bool changed = normalized != m_theme || dark != m_darkMode;
     m_theme = normalized;
     m_darkMode = dark;

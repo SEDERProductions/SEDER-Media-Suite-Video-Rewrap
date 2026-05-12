@@ -5,6 +5,7 @@
 
 #include <QDateTime>
 #include <QFileInfo>
+#include <QPointer>
 #include <QThread>
 #include <future>
 
@@ -37,19 +38,23 @@ void ProbeEngine::recheckCached()
 
 void ProbeEngine::recheckBackground()
 {
-    QThread *worker = QThread::create([this] {
+    QPointer<ProbeEngine> self(this);
+    QThread *worker = QThread::create([self] {
         const bool ffmpegOk = ProcessUtil::programExists("ffmpeg");
         const bool ffprobeOk = ProcessUtil::programExists("ffprobe");
         const bool ffplayOk = ProcessUtil::programExists("ffplay");
         const qint64 timestamp = QDateTime::currentMSecsSinceEpoch();
-        QMetaObject::invokeMethod(this, [this, ffmpegOk, ffprobeOk, ffplayOk, timestamp] {
-            m_ffmpegReady = ffmpegOk;
-            m_ffprobeReady = ffprobeOk;
-            m_ffplayReady = ffplayOk;
-            m_lastToolCheckMs = timestamp;
-            emit toolsChanged(m_ffmpegReady, m_ffprobeReady, m_ffplayReady);
-            emit logMessage(toolStatusText());
-        }, Qt::QueuedConnection);
+        if (self) {
+            QMetaObject::invokeMethod(self, [self, ffmpegOk, ffprobeOk, ffplayOk, timestamp] {
+                if (!self) return;
+                self->m_ffmpegReady = ffmpegOk;
+                self->m_ffprobeReady = ffprobeOk;
+                self->m_ffplayReady = ffplayOk;
+                self->m_lastToolCheckMs = timestamp;
+                emit self->toolsChanged(self->m_ffmpegReady, self->m_ffprobeReady, self->m_ffplayReady);
+                emit self->logMessage(self->toolStatusText());
+            }, Qt::QueuedConnection);
+        }
     });
     connect(worker, &QThread::finished, worker, &QObject::deleteLater);
     worker->start();
@@ -62,14 +67,18 @@ void ProbeEngine::probeSource(const QString &path)
         return;
     }
 
-    QThread *worker = QThread::create([this, path] {
+    QPointer<ProbeEngine> self(this);
+    QThread *worker = QThread::create([self, path] {
         const QJsonObject metadataReply = RustBridge::ffprobeMetadataCommand(path);
         const QJsonObject keyframeReply = RustBridge::ffprobeKeyframeCommand(path);
         if (!metadataReply.value("ok").toBool() || !keyframeReply.value("ok").toBool()) {
             const QString error = metadataReply.value("error").toString(keyframeReply.value("error").toString());
-            QMetaObject::invokeMethod(this, [this, error] {
-                emit probeComplete(false, QJsonObject(), QJsonArray(), error);
-            }, Qt::QueuedConnection);
+            if (self) {
+                QMetaObject::invokeMethod(self, [self, error] {
+                    if (!self) return;
+                    emit self->probeComplete(false, QJsonObject(), QJsonArray(), error);
+                }, Qt::QueuedConnection);
+            }
             return;
         }
 
@@ -85,21 +94,27 @@ void ProbeEngine::probeSource(const QString &path)
         const ProcessResult keyframes = keyframesFuture.get();
         if (!metadata.ok || !keyframes.ok) {
             const QString error = !metadata.ok ? metadata.stderrText : keyframes.stderrText;
-            QMetaObject::invokeMethod(this, [this, error] {
-                emit probeComplete(false, QJsonObject(), QJsonArray(), error);
-            }, Qt::QueuedConnection);
+            if (self) {
+                QMetaObject::invokeMethod(self, [self, error] {
+                    if (!self) return;
+                    emit self->probeComplete(false, QJsonObject(), QJsonArray(), error);
+                }, Qt::QueuedConnection);
+            }
             return;
         }
 
         const quint64 size = QFileInfo(path).size();
         const QJsonObject parsed = RustBridge::parseProbeResult(path, size, metadata.stdoutText, keyframes.stdoutText);
-        QMetaObject::invokeMethod(this, [this, parsed] {
-            if (!parsed.value("ok").toBool()) {
-                emit probeComplete(false, QJsonObject(), QJsonArray(), parsed.value("error").toString());
-                return;
-            }
-            emit probeComplete(true, parsed.value("metadata").toObject(), parsed.value("keyframes").toArray(), QString());
-        }, Qt::QueuedConnection);
+        if (self) {
+            QMetaObject::invokeMethod(self, [self, parsed] {
+                if (!self) return;
+                if (!parsed.value("ok").toBool()) {
+                    emit self->probeComplete(false, QJsonObject(), QJsonArray(), parsed.value("error").toString());
+                    return;
+                }
+                emit self->probeComplete(true, parsed.value("metadata").toObject(), parsed.value("keyframes").toArray(), QString());
+            }, Qt::QueuedConnection);
+        }
     });
     connect(worker, &QThread::finished, worker, &QObject::deleteLater);
     worker->start();
