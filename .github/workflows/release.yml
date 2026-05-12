@@ -131,8 +131,22 @@ jobs:
       - name: Build
         run: cmake --build qt/build/release --config Release
 
-      - name: Install (deploys Qt runtime)
-        run: cmake --install qt/build/release --config Release
+      - name: Install (deploys Qt runtime) - Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/bin
+          $exe = Get-ChildItem -Path qt/build/release -Recurse -Filter seder-video-rewrap.exe | Select-Object -First 1
+          Copy-Item $exe.FullName dist/bin/
+          cmake --install qt/build/release --config Release
+
+      - name: Install (deploys Qt runtime) - Unix
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist/bin
+          exe=$(find qt/build/release -name 'seder-video-rewrap*' -type f -not -name '*.pdb' | head -1)
+          cp "$exe" dist/bin/
+          cmake --install qt/build/release --config Release
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -141,7 +155,6 @@ jobs:
           $name = "seder-video-rewrap-${{ steps.vars.outputs.tag }}-windows-x64"
           $stage = "release/$name"
           New-Item -ItemType Directory -Force -Path $stage
-          Get-ChildItem dist -Recurse -Name
           Copy-Item -Path dist/* -Destination $stage -Recurse -Force
           Compress-Archive -Path "$stage/*" -DestinationPath "release/$name.zip" -Force
 
