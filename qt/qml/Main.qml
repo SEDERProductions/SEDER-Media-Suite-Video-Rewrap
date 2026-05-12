@@ -22,7 +22,9 @@ ApplicationWindow {
     readonly property var tableColumnMinimums: [64, 170, 120, 120, 120, 220]
     readonly property var tableColumnWeights: [1.0, 2.0, 1.3, 1.3, 1.3, 3.1]
 
-    function tableColumnWidth(column) {
+    property var __cachedColumnWidths: []
+
+    function recalculateColumnWidths() {
         var minimumTotal = 0
         for (var i = 0; i < tableColumnMinimums.length; ++i)
             minimumTotal += tableColumnMinimums[i]
@@ -43,7 +45,13 @@ ApplicationWindow {
             used += widths[n]
         widths[notesIndex] = Math.max(tableColumnMinimums[notesIndex], tableAvailableWidth - used)
 
-        return widths[column]
+        __cachedColumnWidths = widths
+    }
+
+    onTableAvailableWidthChanged: recalculateColumnWidths()
+
+    function tableColumnWidth(column) {
+        return __cachedColumnWidths[column] || 0
     }
     readonly property bool dark: app.darkMode
     readonly property color bg: dark ? "#12110f" : "#ece6d9"
@@ -300,6 +308,14 @@ ApplicationWindow {
                         enabled: !app.busy
                         Layout.fillWidth: true
                         onClicked: app.startExport()
+                    }
+                    CommandButton {
+                        text: "Replace File"
+                        enabled: !app.busy && app.sourcePath.length > 0
+                        Layout.fillWidth: true
+                        onClicked: app.replaceFile()
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Renames source to _PREWRAP and exports new file in its place."
                     }
                     CommandButton {
                         text: "Cancel Export"

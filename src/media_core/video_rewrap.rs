@@ -98,26 +98,8 @@ fn container_extension_from_path(output: &Path) -> String {
         .to_ascii_lowercase()
 }
 
-fn container_family_for_extension(ext: &str) -> Option<&'static str> {
-    match ext {
-        "mov" => Some("mov"),
-        "mp4" | "m4v" => Some("mp4"),
-        "mkv" => Some("matroska"),
-        _ => None,
-    }
-}
-
-fn metadata_has_family(container: Option<&str>, family: &str) -> bool {
-    let Some(container) = container else {
-        return false;
-    };
-    container
-        .split(',')
-        .any(|c| c.trim().eq_ignore_ascii_case(family))
-}
-
 pub fn rewrap_preflight(
-    metadata: &VideoMetadata,
+    _metadata: &VideoMetadata,
     segments: &[RewrapSegment],
     keyframes: &[i64],
     output: &Path,
@@ -129,30 +111,21 @@ pub fn rewrap_preflight(
     }
 
     let ext = container_extension_from_path(output);
-    let family = container_family_for_extension(&ext).with_context(|| {
-        format!("Output container '.{}' is not supported for stream-copy rewrap. Use .mov, .mp4/.m4v, or .mkv.", ext)
-    })?;
+    let mut guidance = vec![
+        "No re-encode fallback is available in this export path.".into(),
+    ];
 
-    if !metadata_has_family(metadata.container.as_deref(), family) {
-        anyhow::bail!(
-            "Preflight failed: source container '{}' does not advertise {} compatibility for stream-copy output '.{}'. No re-encode fallback is available. Adjust container choice, stream layout, or source normalization before exporting.",
-            metadata.container.clone().unwrap_or_else(|| "unknown".into()),
-            family,
-            ext
-        );
-    }
+    guidance.push(format!(
+        "Output container '.{}' will be used with stream-copy. If ffmpeg reports a muxer error, try a different container format.",
+        if ext.is_empty() { "mov" } else { &ext }
+    ));
 
     Ok(RewrapPreflight {
         container_extension: ext,
         container_match: true,
         enabled_segment_count,
         no_reencode_fallback: true,
-        guidance: vec![
-            "No re-encode fallback is available in this export path.".into(),
-            "Adjust container choice (mov/mp4/m4v/mkv) so it matches the source container family.".into(),
-            "Adjust stream layout (for example remove unsupported attachments/data streams for target container).".into(),
-            "Normalize the source with an explicit transcode/remux pass before using segment rewrap.".into(),
-        ],
+        guidance,
     })
 }
 
@@ -175,20 +148,17 @@ pub fn parse_timecode_to_ms(value: &str) -> Result<i64> {
         )?;
         return Ok((seconds * 1000.0).round() as i64);
     }
-    let parts = trimmed.split(':').collect::<Vec<_>>();
-    if parts.len() != 3 {
-        anyhow::bail!("Use HH:MM:SS.mmm timecode");
-    }
-    let hours = parts[0].parse::<i64>().context("Invalid hours")?;
+    let mut parts = trimmed.splitn(3, ':');
+    let hours = parts.next().context("Use HH:MM:SS.mmm timecode")?.parse::<i64>().context("Invalid hours")?;
     if hours < 0 {
         anyhow::bail!("Hours must be non-negative");
     }
-    let minutes = parts[1].parse::<i64>().context("Invalid minutes")?;
+    let minutes = parts.next().context("Use HH:MM:SS.mmm timecode")?.parse::<i64>().context("Invalid minutes")?;
     if !(0..60).contains(&minutes) {
         anyhow::bail!("Minutes must be between 0 and 59");
     }
     let seconds = finite_non_negative_seconds(
-        parts[2].parse::<f64>().context("Invalid seconds")?,
+        parts.next().context("Use HH:MM:SS.mmm timecode")?.parse::<f64>().context("Invalid seconds")?,
         "Seconds",
     )?;
     if seconds >= 60.0 {
@@ -263,16 +233,33 @@ pub fn parse_ffprobe_metadata(output: &str, source: &Path, file_size: u64) -> Vi
     metadata
 }
 
+fn nearest_keyframe_index(keyframes: &[i64], requested_ms: i64) -> Option<usize> {
+    if keyframes.is_empty() {
+        return None;
+    }
+    let idx = match keyframes.binary_search(&requested_ms) {
+        Ok(i) => i,
+        Err(0) => 0,
+        Err(i) if i >= keyframes.len() => keyframes.len() - 1,
+        Err(i) => {
+            if requested_ms.abs_diff(keyframes[i - 1]) <= requested_ms.abs_diff(keyframes[i]) {
+                i - 1
+            } else {
+                i
+            }
+        }
+    };
+    Some(idx)
+}
+
 pub fn nearest_keyframe(keyframes: &[i64], requested_ms: i64) -> Option<SnapResult> {
-    keyframes
-        .iter()
-        .copied()
-        .min_by_key(|candidate| candidate.abs_diff(requested_ms))
-        .map(|snapped_ms| SnapResult {
-            requested_ms,
-            snapped_ms,
-            distance_ms: snapped_ms.abs_diff(requested_ms).min(i64::MAX as u64) as i64,
-        })
+    let idx = nearest_keyframe_index(keyframes, requested_ms)?;
+    let snapped_ms = keyframes[idx];
+    Some(SnapResult {
+        requested_ms,
+        snapped_ms,
+        distance_ms: snapped_ms.abs_diff(requested_ms).min(i64::MAX as u64) as i64,
+    })
 }
 
 pub fn segment_duration(segment: &RewrapSegment) -> i64 {
@@ -290,9 +277,8 @@ pub fn total_enabled_duration(segments: &[RewrapSegment]) -> i64 {
 pub const KEYFRAME_TOLERANCE_MS: i64 = 2;
 
 pub fn is_known_keyframe(keyframes: &[i64], ms: i64) -> bool {
-    keyframes
-        .iter()
-        .any(|candidate| candidate.abs_diff(ms) <= KEYFRAME_TOLERANCE_MS as u64)
+    nearest_keyframe(keyframes, ms)
+        .is_some_and(|snap| snap.distance_ms <= KEYFRAME_TOLERANCE_MS)
 }
 
 pub fn validate_segment(segment: &RewrapSegment, keyframes: &[i64]) -> Result<()> {
@@ -399,7 +385,6 @@ pub fn ffmpeg_segment_command(
             "copy".into(),
             "-t".into(),
             format_ms(duration_ms),
-            "-copyts".into(),
             "-avoid_negative_ts".into(),
             "make_zero".into(),
             output.to_string_lossy().to_string(),
@@ -450,14 +435,6 @@ pub fn load_project(path: &Path) -> Result<RewrapProject> {
 
 fn csv_cell(value: impl AsRef<str>) -> String {
     format!("\"{}\"", value.as_ref().replace('"', "\"\""))
-}
-
-fn output_extension(path: &Path) -> String {
-    path.extension()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .unwrap_or("mov")
-        .to_string()
 }
 
 pub fn rewrap_report_txt(
@@ -543,6 +520,14 @@ pub fn rewrap_report_csv(
 
 fn current_timestamp() -> String {
     chrono::Utc::now().to_rfc3339()
+}
+
+pub fn output_extension(path: &Path) -> String {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("mov")
+        .to_string()
 }
 
 pub fn temp_segment_path(temp_dir: &Path, index: usize, extension: &str) -> PathBuf {

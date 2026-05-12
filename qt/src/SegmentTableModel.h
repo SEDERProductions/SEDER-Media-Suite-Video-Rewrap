@@ -50,8 +50,11 @@ public:
     void fromJsonArray(const QJsonArray &array);
 
 private:
+    void invalidateJsonCache();
     QString timeText(qint64 milliseconds) const;
     QString cellDisplay(const SegmentRow &segment, int column) const;
 
     QVector<SegmentRow> m_segments;
+    mutable QJsonArray m_cachedJson;
+    mutable bool m_jsonDirty = true;
 };

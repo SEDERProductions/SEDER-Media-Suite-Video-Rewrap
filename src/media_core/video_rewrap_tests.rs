@@ -202,8 +202,9 @@ fn ffmpeg_segment_args_use_duration_and_stable_seek() {
     assert!(!cmd.args.contains(&"-to".to_string()));
     // Ad-hoc keyframe-only seek: don't decode unwanted frames.
     assert!(cmd.args.contains(&"-noaccurate_seek".to_string()));
-    // Preserve source timestamps so the concat step lines up cleanly.
-    assert!(cmd.args.contains(&"-copyts".to_string()));
+    // Timestamps are NOT preserved — each segment's PTS starts at ~0
+    // so the concat demuxer produces continuous output.
+    assert!(!cmd.args.contains(&"-copyts".to_string()));
     assert!(cmd.args.contains(&"-c".to_string()));
     assert!(cmd.args.contains(&"copy".to_string()));
     // Sanity-check the duration is computed (1500 ms = 00:00:01.500).
@@ -275,7 +276,7 @@ fn preflight_passes_for_matching_container_family() {
 }
 
 #[test]
-fn preflight_fails_for_container_mismatch_with_guidance() {
+fn preflight_passes_for_any_output_container() {
     let metadata = VideoMetadata {
         filename: "src.mov".into(),
         duration_ms: Some(8_000),
@@ -293,12 +294,9 @@ fn preflight_fails_for_container_mismatch_with_guidance() {
         notes: String::new(),
         enabled: true,
     }];
-    let err =
-        rewrap_preflight(&metadata, &segments, &[0, 1_000], Path::new("/tmp/out.mkv")).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("No re-encode fallback is available"));
-    assert!(err
-        .to_string()
-        .contains("Adjust container choice, stream layout, or source normalization"));
+    let preflight =
+        rewrap_preflight(&metadata, &segments, &[0, 1_000], Path::new("/tmp/out.mkv")).unwrap();
+    assert!(preflight.container_match);
+    assert_eq!(preflight.container_extension, "mkv");
+    assert!(preflight.guidance.iter().any(|g| g.contains("stream-copy")));
 }

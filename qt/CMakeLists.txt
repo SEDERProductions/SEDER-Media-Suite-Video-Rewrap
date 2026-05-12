@@ -40,6 +40,9 @@ qt_add_executable(seder-video-rewrap
     WIN32
     src/main.cpp
     src/AppController.cpp
+    src/ExportEngine.cpp
+    src/ProbeEngine.cpp
+    src/ProcessUtil.cpp
     src/RustBridge.cpp
     src/SegmentTableModel.cpp
     ${SEDER_APP_PLATFORM_SOURCES}
@@ -115,6 +118,9 @@ add_test(NAME segment-model-tests COMMAND segment-model-tests)
 qt_add_executable(app-controller-tests
     tests/AppControllerTests.cpp
     src/AppController.cpp
+    src/ExportEngine.cpp
+    src/ProbeEngine.cpp
+    src/ProcessUtil.cpp
     src/RustBridge.cpp
     src/SegmentTableModel.cpp
 )

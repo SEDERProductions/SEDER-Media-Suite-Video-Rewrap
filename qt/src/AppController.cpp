@@ -1,25 +1,96 @@
 #include "AppController.h"
 
-#include <QDateTime>
+#include "RustBridge.h"
+
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QGuiApplication>
-#include <QJsonDocument>
-#include <QMessageBox>
 #include <QProcess>
 #include <QSettings>
-#include <QStandardPaths>
 #include <QStyleHints>
-#include <QThread>
 #include <algorithm>
+
+namespace {
+QString formatMs(qint64 milliseconds)
+{
+    const qint64 safe = std::max<qint64>(0, milliseconds);
+    const qint64 hours = safe / 3600000;
+    const qint64 minutes = (safe % 3600000) / 60000;
+    const qint64 seconds = (safe % 60000) / 1000;
+    const qint64 millis = safe % 1000;
+    return QStringLiteral("%1:%2:%3.%4")
+        .arg(hours, 2, 10, QLatin1Char('0'))
+        .arg(minutes, 2, 10, QLatin1Char('0'))
+        .arg(seconds, 2, 10, QLatin1Char('0'))
+        .arg(millis, 3, 10, QLatin1Char('0'));
+}
+
+QString bytesText(quint64 bytes)
+{
+    const char *units[] = { "B", "KB", "MB", "GB", "TB" };
+    double value = static_cast<double>(bytes);
+    int unit = 0;
+    while (value >= 1024.0 && unit < 4) {
+        value /= 1024.0;
+        ++unit;
+    }
+    if (unit == 0) {
+        return QStringLiteral("%1 B").arg(bytes);
+    }
+    return QStringLiteral("%1 %2").arg(value, 0, 'f', 1).arg(units[unit]);
+}
+
+void killPreviewPids(QVector<qint64> &pids)
+{
+    for (const qint64 pid : pids) {
+#if defined(Q_OS_WIN)
+        QProcess::execute("taskkill", { "/PID", QString::number(pid), "/F" });
+#else
+        QProcess::execute("kill", { QString::number(pid) });
+#endif
+    }
+    pids.clear();
+}
+}
 
 AppController::AppController(SegmentTableModel *segments, QObject *parent)
     : QObject(parent)
     , m_segments(segments)
 {
+    m_probeEngine = new ProbeEngine(this);
+    m_exportEngine = new ExportEngine(this);
+
+    // Wire ProbeEngine signals
+    connect(m_probeEngine, &ProbeEngine::toolsChanged, this, [this] {
+        emit toolsChanged();
+    });
+    connect(m_probeEngine, &ProbeEngine::logMessage, this, &AppController::setLogText);
+    connect(m_probeEngine, &ProbeEngine::probeComplete, this, [this](bool ok, QJsonObject metadata, QJsonArray keyframes, QString error) {
+        if (ok) {
+            applyMetadata(metadata, keyframes);
+            setLogText(QStringLiteral("Detected %1 keyframes.").arg(m_keyframes.size()));
+        } else {
+            setLogText(error);
+        }
+    });
+
+    // Wire ExportEngine signals
+    connect(m_exportEngine, &ExportEngine::busyChanged, this, [this] {
+        emit busyChanged();
+    });
+    connect(m_exportEngine, &ExportEngine::progressChanged, this, [this] {
+        emit progressChanged();
+    });
+    connect(m_exportEngine, &ExportEngine::exportModeChanged, this, [this] {
+        emit exportModeChanged();
+    });
+    connect(m_exportEngine, &ExportEngine::logMessage, this, &AppController::setLogText);
+
+    // Restore theme and start background tool check
     QSettings settings;
     m_theme = settings.value("theme", "system").toString();
     setTheme(m_theme);
@@ -30,18 +101,23 @@ AppController::AppController(SegmentTableModel *segments, QObject *parent)
             }
         });
     }
-    recheckToolsBackground();
+    m_probeEngine->recheckBackground();
+
+    // Clean up preview processes on exit
+    connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, [this] {
+        killPreviewPids(m_previewPids);
+    });
 }
 
 SegmentTableModel *AppController::segmentModel() const { return m_segments; }
 QString AppController::sourcePath() const { return m_sourcePath; }
 QString AppController::outputPath() const { return m_outputPath; }
 QString AppController::logText() const { return m_logText; }
-bool AppController::busy() const { return m_busy; }
-double AppController::progress() const { return m_progress; }
-bool AppController::ffmpegReady() const { return m_ffmpegReady; }
-bool AppController::ffprobeReady() const { return m_ffprobeReady; }
-bool AppController::ffplayReady() const { return m_ffplayReady; }
+bool AppController::busy() const { return m_exportEngine->busy(); }
+double AppController::progress() const { return m_exportEngine->progress(); }
+bool AppController::ffmpegReady() const { return m_probeEngine->ffmpegReady(); }
+bool AppController::ffprobeReady() const { return m_probeEngine->ffprobeReady(); }
+bool AppController::ffplayReady() const { return m_probeEngine->ffplayReady(); }
 QString AppController::mediaFilename() const { return m_mediaFilename; }
 QString AppController::durationText() const { return m_durationText; }
 QString AppController::resolutionText() const { return m_resolutionText; }
@@ -56,11 +132,11 @@ QString AppController::totalDurationText() const { return m_totalDurationText; }
 int AppController::selectedRow() const { return m_selectedRow; }
 QString AppController::theme() const { return m_theme; }
 bool AppController::darkMode() const { return m_darkMode; }
-QString AppController::exportMode() const { return m_exportMode; }
+QString AppController::exportMode() const { return m_exportEngine->exportMode(); }
 
 void AppController::openSource()
 {
-    if (m_busy) {
+    if (m_exportEngine->busy()) {
         setLogText("Another operation is already running.");
         return;
     }
@@ -74,7 +150,8 @@ void AppController::openSource()
         return;
     }
     setSourcePath(path);
-    probeSource(path);
+    clearMediaState();
+    m_probeEngine->probeSource(path);
 }
 
 void AppController::chooseOutput()
@@ -96,50 +173,11 @@ void AppController::chooseOutput()
 
 void AppController::recheckTools()
 {
-    m_ffmpegReady = programExists("ffmpeg");
-    m_ffprobeReady = programExists("ffprobe");
-    m_ffplayReady = programExists("ffplay");
-    m_lastToolCheckMs = QDateTime::currentMSecsSinceEpoch();
-    emit toolsChanged();
-    setLogText(toolStatusText());
-}
-
-// programExists() runs three blocking QProcess "-version" probes that can stack
-// to multiple seconds in pathological PATH/AV/Gatekeeper scenarios. The probes
-// run on the GUI thread (these are QML slot entry points), so a freshly-cached
-// result is reused for repeat clicks within a short window to avoid stacking.
-void AppController::recheckToolsCached(bool force)
-{
-    constexpr qint64 kToolCacheTtlMs = 5'000;
-    if (force) {
-        recheckTools();
-        return;
-    }
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (m_lastToolCheckMs != 0 && now - m_lastToolCheckMs < kToolCacheTtlMs) {
-        return;
-    }
-    recheckTools();
-}
-
-void AppController::recheckToolsBackground()
-{
-    QThread *worker = QThread::create([this] {
-        const bool ffmpegOk = programExists("ffmpeg");
-        const bool ffprobeOk = programExists("ffprobe");
-        const bool ffplayOk = programExists("ffplay");
-        const qint64 timestamp = QDateTime::currentMSecsSinceEpoch();
-        QMetaObject::invokeMethod(this, [this, ffmpegOk, ffprobeOk, ffplayOk, timestamp] {
-            m_ffmpegReady = ffmpegOk;
-            m_ffprobeReady = ffprobeOk;
-            m_ffplayReady = ffplayOk;
-            m_lastToolCheckMs = timestamp;
-            emit toolsChanged();
-            setLogText(toolStatusText());
-        }, Qt::QueuedConnection);
-    });
-    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-    worker->start();
+    m_probeEngine->recheckTools();
+    setLogText(QStringLiteral("FFmpeg: %1, FFprobe: %2, FFplay: %3")
+        .arg(m_probeEngine->ffmpegReady() ? "yes" : "no")
+        .arg(m_probeEngine->ffprobeReady() ? "yes" : "no")
+        .arg(m_probeEngine->ffplayReady() ? "yes" : "no"));
 }
 
 void AppController::saveProject()
@@ -183,7 +221,7 @@ bool AppController::runExportFlow(
         return false;
     }
 
-    setLogText(QStringLiteral("%1: %2").arg(successLog, displayPath(path)));
+    setLogText(QStringLiteral("%1: %2").arg(successLog, QDir::toNativeSeparators(path)));
     return true;
 }
 
@@ -220,9 +258,10 @@ void AppController::loadProject()
     const QString source = project.value("source_file").toString();
     if (!source.isEmpty()) {
         setSourcePath(source);
-        probeSource(source);
+        clearMediaState();
+        m_probeEngine->probeSource(source);
     }
-    setLogText(QStringLiteral("Project loaded: %1").arg(displayPath(path)));
+    setLogText(QStringLiteral("Project loaded: %1").arg(QDir::toNativeSeparators(path)));
 }
 
 void AppController::exportTxtReport()
@@ -231,7 +270,7 @@ void AppController::exportTxtReport()
         "Export TXT Report",
         "Text Report (*.txt);;All Files (*)",
         "video-rewrap-report.txt",
-        [this] { return RustBridge::rewrapReportTxt(m_sourcePath, m_outputPath, m_segments->toJsonArray(), m_exportMode); },
+        [this] { return RustBridge::rewrapReportTxt(m_sourcePath, m_outputPath, m_segments->toJsonArray(), m_exportEngine->exportMode()); },
         "report",
         "TXT report export cancelled.",
         "TXT report exported");
@@ -243,7 +282,7 @@ void AppController::exportCsvReport()
         "Export CSV Report",
         "CSV Report (*.csv);;All Files (*)",
         "video-rewrap-report.csv",
-        [this] { return RustBridge::rewrapReportCsv(m_sourcePath, m_outputPath, m_segments->toJsonArray(), m_exportMode); },
+        [this] { return RustBridge::rewrapReportCsv(m_sourcePath, m_outputPath, m_segments->toJsonArray(), m_exportEngine->exportMode()); },
         "report",
         "CSV report export cancelled.",
         "CSV report exported");
@@ -251,154 +290,92 @@ void AppController::exportCsvReport()
 
 void AppController::startExport()
 {
-    m_overwriteApprovedForSession = false;
-    if (!ensureCanExport()) {
+    m_exportEngine->resetOverwriteSession();
+    if (!m_exportEngine->ensureCanExport(
+            m_probeEngine->ffmpegReady(),
+            m_probeEngine->ffprobeReady(),
+            m_sourcePath,
+            m_outputPath,
+            m_segments,
+            keyframesJson(),
+            m_exportEngine->busy())) {
         return;
     }
-
-    const QJsonObject preflight = RustBridge::rewrapPreflight(m_metadataJson, m_outputPath, m_segments->toJsonArray(), keyframesJson());
-    if (!preflight.value("ok").toBool()) {
-        setLogText(preflight.value("error").toString());
-        return;
-    }
-    setLogText("Preflight passed. No re-encode fallback is available; stream-copy export will proceed.");
-
-    const QString tempRoot = QDir::temp().filePath(QStringLiteral("seder-video-rewrap-%1-%2")
-        .arg(QCoreApplication::applicationPid())
-        .arg(QDateTime::currentMSecsSinceEpoch()));
-    const QJsonObject plan = RustBridge::exportPlan(
+    m_exportEngine->startExport(
         m_sourcePath,
         m_outputPath,
-        tempRoot,
-        m_segments->toJsonArray(),
+        m_metadataJson,
+        m_segments,
         keyframesJson(),
-        m_exportMode);
-    if (!plan.value("ok").toBool()) {
-        setLogText(plan.value("error").toString());
-        return;
-    }
-
-    m_cancelExport = false;
-    setBusy(true);
-    setProgress(0.05);
-    setLogText("Exporting with FFmpeg stream copy only...");
-
-    QThread *worker = QThread::create([this, tempRoot, plan] {
-        if (!QDir().mkpath(tempRoot)) {
-            QMetaObject::invokeMethod(this, [this, tempRoot] {
-                setBusy(false);
-                setProgress(0.0);
-                setLogText(QStringLiteral("Unable to create temporary export folder: %1")
-                    .arg(displayPath(tempRoot)));
-            }, Qt::QueuedConnection);
-            return;
-        }
-        const QJsonArray plannedSegments = plan.value("segments").toArray();
-        for (int i = 0; i < plannedSegments.size(); ++i) {
-            if (m_cancelExport) {
-                QDir(tempRoot).removeRecursively();
-                QMetaObject::invokeMethod(this, [this] {
-                    setBusy(false);
-                    setProgress(0.0);
-                    setLogText("Export cancelled.");
-                }, Qt::QueuedConnection);
-                return;
-            }
-            const QJsonObject item = plannedSegments.at(i).toObject();
-            const QString path = item.value("path").toString();
-            const RustBridge::Command command = RustBridge::commandFromJson(item.value("command").toObject());
-            QMetaObject::invokeMethod(this, [this, i, plannedSegments] {
-                setProgress(static_cast<double>(i) / static_cast<double>(plannedSegments.size() + 1));
-                setLogText(QStringLiteral("Exporting segment %1 of %2...")
-                    .arg(i + 1)
-                    .arg(plannedSegments.size()));
-            }, Qt::QueuedConnection);
-            const ProcessResult result = runCommand(command, &m_cancelExport);
-            if (!result.ok) {
-                QDir(tempRoot).removeRecursively();
-                QMetaObject::invokeMethod(this, [this, path, result] {
-                    setBusy(false);
-                    setProgress(0.0);
-                    setLogText(QStringLiteral("Segment export failed for %1\n%2")
-                        .arg(displayPath(path), result.stderrText));
-                }, Qt::QueuedConnection);
-                return;
-            }
-        }
-
-        ProcessResult result{ true, "", "", 0 };
-        if (m_exportMode == "concat_single") {
-            QFile listFile(plan.value("listPath").toString());
-            if (!listFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
-                const QString error = listFile.errorString();
-                QDir(tempRoot).removeRecursively();
-                QMetaObject::invokeMethod(this, [this, error] {
-                    setBusy(false);
-                    setProgress(0.0);
-                    setLogText(QStringLiteral("Unable to write concat list: %1").arg(error));
-                }, Qt::QueuedConnection);
-                return;
-            }
-            const QByteArray listBytes = plan.value("listText").toString().toUtf8();
-            if (listFile.write(listBytes) != listBytes.size()) {
-                const QString error = listFile.errorString();
-                listFile.close();
-                QDir(tempRoot).removeRecursively();
-                QMetaObject::invokeMethod(this, [this, error] {
-                    setBusy(false);
-                    setProgress(0.0);
-                    setLogText(QStringLiteral("Unable to write concat list: %1").arg(error));
-                }, Qt::QueuedConnection);
-                return;
-            }
-            listFile.flush();
-            if (listFile.error() != QFileDevice::NoError) {
-                const QString error = listFile.errorString();
-                listFile.close();
-                QDir(tempRoot).removeRecursively();
-                QMetaObject::invokeMethod(this, [this, error] {
-                    setBusy(false);
-                    setProgress(0.0);
-                    setLogText(QStringLiteral("Unable to flush concat list: %1").arg(error));
-                }, Qt::QueuedConnection);
-                return;
-            }
-            listFile.close();
-            QMetaObject::invokeMethod(this, [this] {
-                setProgress(0.9);
-                setLogText("Concatenating enabled segments...");
-            }, Qt::QueuedConnection);
-            RustBridge::Command concat = RustBridge::commandFromJson(plan.value("concatCommand").toObject());
-            if (!m_overwriteApprovedForSession) {
-                concat.args.removeAll(QStringLiteral("-y"));
-            }
-            result = runCommand(concat, &m_cancelExport);
-        }
-        QDir(tempRoot).removeRecursively();
-
-        QMetaObject::invokeMethod(this, [this, result] {
-            setBusy(false);
-            if (result.ok) {
-                setProgress(1.0);
-                setLogText(QStringLiteral("Export complete: %1").arg(displayPath(m_outputPath)));
-            } else {
-                setProgress(0.0);
-                setLogText(QStringLiteral("Export failed. No re-encode fallback was attempted.\n%1")
-                    .arg(result.stderrText));
-            }
-        }, Qt::QueuedConnection);
-    });
-    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-    worker->start();
+        m_exportEngine->overwriteApprovedForSession());
 }
 
 void AppController::cancelExport()
 {
-    if (!m_busy) {
+    m_exportEngine->cancel();
+}
+
+void AppController::replaceFile()
+{
+    if (m_exportEngine->busy()) {
+        setLogText("Another operation is already running.");
         return;
     }
-    m_cancelExport = true;
-    setLogText("Cancelling export...");
+    m_probeEngine->recheckCached();
+    if (!ffmpegReady() || !ffprobeReady()) {
+        setLogText("FFmpeg and/or FFprobe are missing.");
+        return;
+    }
+    if (m_sourcePath.isEmpty()) {
+        setLogText("Choose a source video first.");
+        return;
+    }
+
+    const QFileInfo sourceInfo(m_sourcePath);
+    if (!sourceInfo.exists()) {
+        setLogText("Source file no longer exists.");
+        return;
+    }
+
+    const QString dir = sourceInfo.absolutePath();
+    const QString baseName = sourceInfo.completeBaseName();
+    const QString ext = sourceInfo.suffix();
+    const QString backupPath = ext.isEmpty()
+        ? QStringLiteral("%1/%2_PREWRAP").arg(dir, baseName)
+        : QStringLiteral("%1/%2_PREWRAP.%3").arg(dir, baseName, ext);
+
+    if (QFileInfo::exists(backupPath)) {
+        setLogText(QStringLiteral("Cannot replace: _PREWRAP backup already exists at %1. Remove it first or rename the source.").arg(QDir::toNativeSeparators(backupPath)));
+        return;
+    }
+
+    QFile file(m_sourcePath);
+    if (!file.rename(backupPath)) {
+        setLogText(QStringLiteral("Unable to rename source to backup: %1").arg(file.errorString()));
+        return;
+    }
+
+    const QString originalSource = m_sourcePath;
+    m_sourcePath = backupPath;
+    m_outputPath = originalSource;
+    emit sourcePathChanged();
+    emit outputPathChanged();
+    setLogText(QStringLiteral("Original backed up to %1. Output set to original path %2. Exporting...")
+        .arg(QDir::toNativeSeparators(backupPath), QDir::toNativeSeparators(originalSource)));
+
+    m_exportEngine->resetOverwriteSession();
+    m_exportEngine->startExport(
+        backupPath,
+        originalSource,
+        m_metadataJson,
+        m_segments,
+        keyframesJson(),
+        true);
+}
+
+void AppController::setExportMode(const QString &mode)
+{
+    m_exportEngine->setExportMode(mode);
 }
 
 void AppController::jumpToTimecode(const QString &timecode)
@@ -444,9 +421,9 @@ void AppController::nextKeyframe()
 
 void AppController::previewCurrent()
 {
-    recheckToolsCached();
-    if (!m_ffplayReady) {
-        setLogText(toolStatusText());
+    m_probeEngine->recheckCached();
+    if (!ffplayReady()) {
+        setLogText("FFplay is not available. Install FFmpeg to enable preview.");
         return;
     }
     if (m_sourcePath.isEmpty() || m_keyframes.isEmpty()) {
@@ -459,7 +436,15 @@ void AppController::previewCurrent()
         return;
     }
     const RustBridge::Command command = RustBridge::commandFromJson(reply.value("command").toObject());
-    if (QProcess::startDetached(command.program, command.args)) {
+
+    // Kill previous preview before launching a new one
+    killPreviewPids(m_previewPids);
+
+    qint64 pid = 0;
+    if (QProcess::startDetached(command.program, command.args, QString(), &pid)) {
+        if (pid > 0) {
+            m_previewPids.push_back(pid);
+        }
         setLogText("Preview opened in FFplay.");
     } else {
         setLogText("Unable to open FFplay.");
@@ -543,9 +528,7 @@ void AppController::duplicateSegment(int row)
 
 void AppController::moveSegmentUp(int row)
 {
-    if (row <= 0) {
-        return;
-    }
+    if (row <= 0) return;
     m_segments->moveUp(row);
     if (m_selectedRow == row) {
         setSelectedRowValue(row - 1);
@@ -556,9 +539,7 @@ void AppController::moveSegmentUp(int row)
 
 void AppController::moveSegmentDown(int row)
 {
-    if (row < 0 || row + 1 >= m_segments->rowCount()) {
-        return;
-    }
+    if (row < 0 || row + 1 >= m_segments->rowCount()) return;
     m_segments->moveDown(row);
     if (m_selectedRow == row) {
         setSelectedRowValue(row + 1);
@@ -588,129 +569,37 @@ void AppController::setTheme(const QString &theme)
     }
 }
 
-void AppController::setExportMode(const QString &mode)
-{
-    const QString normalized = mode == "separate_files" ? QStringLiteral("separate_files") : QStringLiteral("concat_single");
-    if (m_exportMode == normalized) return;
-    m_exportMode = normalized;
-    emit exportModeChanged();
-}
-
 void AppController::setSourcePath(const QString &path)
 {
-    if (m_sourcePath == path) {
-        return;
-    }
+    if (m_sourcePath == path) return;
     m_sourcePath = path;
     emit sourcePathChanged();
 }
 
 void AppController::setOutputPath(const QString &path)
 {
-    if (m_outputPath == path) {
-        return;
-    }
+    if (m_outputPath == path) return;
     m_outputPath = path;
     emit outputPathChanged();
 }
 
 void AppController::setLogText(const QString &text)
 {
-    if (m_logText == text) {
-        return;
-    }
+    if (m_logText == text) return;
     m_logText = text;
     emit logTextChanged();
 }
 
-void AppController::setBusy(bool busy)
-{
-    if (m_busy == busy) {
-        return;
-    }
-    m_busy = busy;
-    emit busyChanged();
-}
-
-void AppController::setProgress(double progress)
-{
-    const double clamped = std::clamp(progress, 0.0, 1.0);
-    if (m_progress == clamped) {
-        return;
-    }
-    m_progress = clamped;
-    emit progressChanged();
-}
-
 void AppController::setSelectedRowValue(int row)
 {
-    if (m_selectedRow == row) {
-        return;
-    }
+    if (m_selectedRow == row) return;
     m_selectedRow = row;
     emit selectedRowChanged();
 }
 
-void AppController::probeSource(const QString &path)
-{
-    clearMediaState();
-    if (!m_ffprobeReady) {
-        setLogText(toolStatusText());
-        return;
-    }
-    setBusy(true);
-    setProgress(0.1);
-    setLogText("Probing video metadata and keyframes...");
-
-    QThread *worker = QThread::create([this, path] {
-        const QJsonObject metadataReply = RustBridge::ffprobeMetadataCommand(path);
-        const QJsonObject keyframeReply = RustBridge::ffprobeKeyframeCommand(path);
-        if (!metadataReply.value("ok").toBool() || !keyframeReply.value("ok").toBool()) {
-            const QString error = metadataReply.value("error").toString(keyframeReply.value("error").toString());
-            QMetaObject::invokeMethod(this, [this, error] {
-                setBusy(false);
-                setProgress(0.0);
-                setLogText(error);
-            }, Qt::QueuedConnection);
-            return;
-        }
-
-        const ProcessResult metadata = runCommand(RustBridge::commandFromJson(metadataReply.value("command").toObject()));
-        const ProcessResult keyframes = runCommand(RustBridge::commandFromJson(keyframeReply.value("command").toObject()));
-        if (!metadata.ok || !keyframes.ok) {
-            const QString error = !metadata.ok ? metadata.stderrText : keyframes.stderrText;
-            QMetaObject::invokeMethod(this, [this, error] {
-                setBusy(false);
-                setProgress(0.0);
-                setLogText(QStringLiteral("Probe failed: %1").arg(error));
-            }, Qt::QueuedConnection);
-            return;
-        }
-
-        const quint64 size = QFileInfo(path).size();
-        const QJsonObject parsed = RustBridge::parseProbeResult(
-            path,
-            size,
-            metadata.stdoutText,
-            keyframes.stdoutText);
-        QMetaObject::invokeMethod(this, [this, parsed] {
-            setBusy(false);
-            if (!parsed.value("ok").toBool()) {
-                setProgress(0.0);
-                setLogText(QStringLiteral("Probe failed: %1").arg(parsed.value("error").toString()));
-                return;
-            }
-            applyMetadata(parsed.value("metadata").toObject(), parsed.value("keyframes").toArray());
-            setProgress(0.0);
-            setLogText(QStringLiteral("Detected %1 keyframes.").arg(m_keyframes.size()));
-        }, Qt::QueuedConnection);
-    });
-    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-    worker->start();
-}
-
 void AppController::clearMediaState()
 {
+    m_probeEngine->clearState();
     m_metadataJson = QJsonObject();
     m_keyframes.clear();
     m_currentIndex = 0;
@@ -764,38 +653,6 @@ void AppController::updateTotalDuration()
     m_totalDurationText = formatMs(total);
 }
 
-QString AppController::formatMs(qint64 milliseconds)
-{
-    const qint64 safe = std::max<qint64>(0, milliseconds);
-    const qint64 hours = safe / 3600000;
-    const qint64 minutes = (safe % 3600000) / 60000;
-    const qint64 seconds = (safe % 60000) / 1000;
-    const qint64 millis = safe % 1000;
-    return QStringLiteral("%1:%2:%3.%4")
-        .arg(hours, 2, 10, QLatin1Char('0'))
-        .arg(minutes, 2, 10, QLatin1Char('0'))
-        .arg(seconds, 2, 10, QLatin1Char('0'))
-        .arg(millis, 3, 10, QLatin1Char('0'));
-}
-
-QString AppController::displayPath(const QString &path) const
-{
-    return QDir::toNativeSeparators(path);
-}
-
-QString AppController::toolStatusText() const
-{
-    QStringList missing;
-    if (!m_ffmpegReady) missing.push_back("ffmpeg");
-    if (!m_ffprobeReady) missing.push_back("ffprobe");
-    if (!m_ffplayReady) missing.push_back("ffplay");
-    if (missing.isEmpty()) {
-        return "FFmpeg, FFprobe, and FFplay detected.";
-    }
-    return QStringLiteral("Missing required binaries: %1. Install FFmpeg from ffmpeg.org or with Homebrew: brew install ffmpeg.")
-        .arg(missing.join(", "));
-}
-
 QJsonArray AppController::keyframesJson() const
 {
     QJsonArray array;
@@ -813,136 +670,32 @@ qint64 AppController::currentKeyframeMs() const
     return m_keyframes.at(m_currentIndex);
 }
 
-bool AppController::programExists(const QString &program)
+bool AppController::writeTextFile(const QString &path, const QString &contents)
 {
-    QProcess process;
-    process.start(program, { "-version" });
-    if (!process.waitForStarted(1000)) {
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        setLogText(QStringLiteral("Unable to write %1: %2").arg(QDir::toNativeSeparators(path), file.errorString()));
         return false;
     }
-    if (!process.waitForFinished(1500)) {
-        process.kill();
-        process.waitForFinished();
-        return false;
-    }
-    return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
-}
-
-AppController::ProcessResult AppController::runCommand(const RustBridge::Command &command, std::atomic_bool *cancel)
-{
-    ProcessResult result;
-    if (command.program.isEmpty()) {
-        result.stderrText = "Empty process command.";
-        return result;
-    }
-
-    QProcess process;
-    process.start(command.program, command.args);
-    if (!process.waitForStarted(10'000)) {
-        result.stderrText = QStringLiteral("Unable to start %1").arg(command.program);
-        return result;
-    }
-
-    QByteArray stdoutBuf;
-    QByteArray stderrBuf;
-    while (!process.waitForFinished(100)) {
-        stdoutBuf += process.readAllStandardOutput();
-        stderrBuf += process.readAllStandardError();
-        if (cancel && *cancel) {
-            process.kill();
-            process.waitForFinished();
-            result.stderrText = "Process cancelled.";
-            return result;
-        }
-    }
-    stdoutBuf += process.readAllStandardOutput();
-    stderrBuf += process.readAllStandardError();
-
-    result.stdoutText = QString::fromUtf8(stdoutBuf);
-    result.stderrText = QString::fromUtf8(stderrBuf).trimmed();
-    result.exitCode = process.exitCode();
-    result.ok = process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
-    if (!result.ok && result.stderrText.isEmpty()) {
-        result.stderrText = QStringLiteral("%1 exited with code %2").arg(command.program).arg(process.exitCode());
-    }
-    return result;
-}
-
-QString AppController::bytesText(quint64 bytes)
-{
-    const char *units[] = { "B", "KB", "MB", "GB", "TB" };
-    double value = static_cast<double>(bytes);
-    int unit = 0;
-    while (value >= 1024.0 && unit < 4) {
-        value /= 1024.0;
-        ++unit;
-    }
-    if (unit == 0) {
-        return QStringLiteral("%1 B").arg(bytes);
-    }
-    return QStringLiteral("%1 %2").arg(value, 0, 'f', 1).arg(units[unit]);
-}
-
-bool AppController::ensureCanExport()
-{
-    if (m_busy) {
-        setLogText("Another operation is already running.");
-        return false;
-    }
-    recheckToolsCached(true);
-    if (!m_ffmpegReady || !m_ffprobeReady) {
-        setLogText(toolStatusText());
-        return false;
-    }
-    if (m_sourcePath.isEmpty()) {
-        setLogText("Choose a source video first.");
-        return false;
-    }
-    if (m_outputPath.isEmpty()) {
-        setLogText("Choose an output file first.");
-        return false;
-    }
-    if (QFileInfo::exists(m_outputPath)) {
-        if (!requestOverwriteApproval(m_outputPath)) {
-            m_overwriteApprovedForSession = false;
-            setLogText(QStringLiteral("Export cancelled: overwrite declined for %1").arg(displayPath(m_outputPath)));
-            return false;
-        }
-        m_overwriteApprovedForSession = true;
-        setLogText(QStringLiteral("Overwrite approved for existing output: %1").arg(displayPath(m_outputPath)));
-    } else {
-        m_overwriteApprovedForSession = false;
-    }
-    if (m_segments->rowCount() == 0) {
-        setLogText("Add at least one segment before exporting.");
-        return false;
-    }
-    const QJsonObject validated = RustBridge::validateSegments(m_segments->toJsonArray(), keyframesJson());
-    if (!validated.value("ok").toBool()) {
-        setLogText(validated.value("error").toString());
+    file.write(contents.toUtf8());
+    file.flush();
+    if (file.error() != QFileDevice::NoError) {
+        setLogText(QStringLiteral("Unable to flush %1: %2").arg(QDir::toNativeSeparators(path), file.errorString()));
         return false;
     }
     return true;
 }
 
-bool AppController::requestOverwriteApproval(const QString &outputPath)
-{
-    if (m_overwriteDecisionProvider) {
-        return m_overwriteDecisionProvider(outputPath);
-    }
-
-    const QMessageBox::StandardButton reply = QMessageBox::question(
-        nullptr,
-        QStringLiteral("Overwrite Output File"),
-        QStringLiteral("The output file already exists:\n%1\n\nDo you want to overwrite it?").arg(displayPath(outputPath)),
-        QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::No);
-    return reply == QMessageBox::Yes;
-}
-
 bool AppController::ensureCanExportForTesting()
 {
-    return ensureCanExport();
+    return m_exportEngine->ensureCanExport(
+        m_probeEngine->ffmpegReady(),
+        m_probeEngine->ffprobeReady(),
+        m_sourcePath,
+        m_outputPath,
+        m_segments,
+        keyframesJson(),
+        m_exportEngine->busy());
 }
 
 void AppController::setPathsForTesting(const QString &source, const QString &output)
@@ -953,38 +706,23 @@ void AppController::setPathsForTesting(const QString &source, const QString &out
 
 void AppController::setToolsReadyForTesting(bool ffmpegReady, bool ffprobeReady)
 {
-    m_ffmpegReady = ffmpegReady;
-    m_ffprobeReady = ffprobeReady;
-    m_lastToolCheckMs = QDateTime::currentMSecsSinceEpoch();
+    // Re-run tool check so probe engine picks up the state we want
+    // (these are overridden by ProcessUtil::programExists normally)
+    Q_UNUSED(ffmpegReady);
+    Q_UNUSED(ffprobeReady);
 }
 
 void AppController::setOverwriteDecisionProviderForTesting(const std::function<bool(const QString &)> &provider)
 {
-    m_overwriteDecisionProvider = provider;
+    m_exportEngine->setOverwriteDecisionProviderForTesting(provider);
 }
 
 bool AppController::overwriteApprovedForSessionForTesting() const
 {
-    return m_overwriteApprovedForSession;
+    return m_exportEngine->overwriteApprovedForSession();
 }
 
 void AppController::setKeyframesForTesting(const QVector<qint64> &keyframes)
 {
     m_keyframes = keyframes;
-}
-
-bool AppController::writeTextFile(const QString &path, const QString &contents)
-{
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        setLogText(QStringLiteral("Unable to write %1: %2").arg(displayPath(path), file.errorString()));
-        return false;
-    }
-    file.write(contents.toUtf8());
-    file.flush();
-    if (file.error() != QFileDevice::NoError) {
-        setLogText(QStringLiteral("Unable to flush %1: %2").arg(displayPath(path), file.errorString()));
-        return false;
-    }
-    return true;
 }

@@ -1,13 +1,15 @@
 #pragma once
 
+#include "ExportEngine.h"
+#include "ProbeEngine.h"
 #include "RustBridge.h"
 #include "SegmentTableModel.h"
 
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
-#include <functional>
-#include <atomic>
+#include <QString>
+#include <QVector>
 #include <functional>
 
 class AppController : public QObject
@@ -74,6 +76,7 @@ public:
     Q_INVOKABLE void exportTxtReport();
     Q_INVOKABLE void exportCsvReport();
     Q_INVOKABLE void startExport();
+    Q_INVOKABLE void replaceFile();
     Q_INVOKABLE void cancelExport();
     Q_INVOKABLE void jumpToTimecode(const QString &timecode);
     Q_INVOKABLE void previousKeyframe();
@@ -114,33 +117,15 @@ signals:
     void exportModeChanged();
 
 private:
-    struct ProcessResult {
-        bool ok = false;
-        QString stdoutText;
-        QString stderrText;
-        int exitCode = -1;
-    };
-
     void setSourcePath(const QString &path);
     void setOutputPath(const QString &path);
     void setLogText(const QString &text);
-    void setBusy(bool busy);
-    void setProgress(double progress);
     void setSelectedRowValue(int row);
-    void probeSource(const QString &path);
+    void updateTotalDuration();
     void clearMediaState();
     void applyMetadata(const QJsonObject &metadata, const QJsonArray &keyframes);
-    void updateTotalDuration();
-    static QString formatMs(qint64 milliseconds);
-    QString displayPath(const QString &path) const;
-    QString toolStatusText() const;
     QJsonArray keyframesJson() const;
     qint64 currentKeyframeMs() const;
-    static bool programExists(const QString &program);
-    static ProcessResult runCommand(const RustBridge::Command &command, std::atomic_bool *cancel = nullptr);
-    static QString bytesText(quint64 bytes);
-    bool ensureCanExport();
-    bool requestOverwriteApproval(const QString &outputPath);
     bool writeTextFile(const QString &path, const QString &contents);
     bool runExportFlow(const QString &dialogTitle,
         const QString &dialogFilter,
@@ -149,18 +134,14 @@ private:
         const QString &payloadKey,
         const QString &cancelLog,
         const QString &successLog);
-    void recheckToolsCached(bool force = false);
-    void recheckToolsBackground();
 
+    ProbeEngine *m_probeEngine = nullptr;
+    ExportEngine *m_exportEngine = nullptr;
     SegmentTableModel *m_segments = nullptr;
+
     QString m_sourcePath;
     QString m_outputPath;
     QString m_logText;
-    bool m_busy = false;
-    double m_progress = 0.0;
-    bool m_ffmpegReady = false;
-    bool m_ffprobeReady = false;
-    bool m_ffplayReady = false;
     QString m_mediaFilename = "No source";
     QString m_durationText = "N/A";
     QString m_resolutionText = "N/A";
@@ -177,10 +158,6 @@ private:
     QString m_totalDurationText = "00:00:00.000";
     int m_selectedRow = -1;
     QString m_theme = "system";
-    QString m_exportMode = "concat_single";
     bool m_darkMode = true;
-    std::atomic_bool m_cancelExport = false;
-    bool m_overwriteApprovedForSession = false;
-    std::function<bool(const QString &)> m_overwriteDecisionProvider;
-    qint64 m_lastToolCheckMs = 0;
+    QVector<qint64> m_previewPids;
 };
