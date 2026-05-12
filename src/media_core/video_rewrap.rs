@@ -111,9 +111,7 @@ pub fn rewrap_preflight(
     }
 
     let ext = container_extension_from_path(output);
-    let mut guidance = vec![
-        "No re-encode fallback is available in this export path.".into(),
-    ];
+    let mut guidance = vec!["No re-encode fallback is available in this export path.".into()];
 
     guidance.push(format!(
         "Output container '.{}' will be used with stream-copy. If ffmpeg reports a muxer error, try a different container format.",
@@ -149,16 +147,28 @@ pub fn parse_timecode_to_ms(value: &str) -> Result<i64> {
         return Ok((seconds * 1000.0).round() as i64);
     }
     let mut parts = trimmed.splitn(3, ':');
-    let hours = parts.next().context("Use HH:MM:SS.mmm timecode")?.parse::<i64>().context("Invalid hours")?;
+    let hours = parts
+        .next()
+        .context("Use HH:MM:SS.mmm timecode")?
+        .parse::<i64>()
+        .context("Invalid hours")?;
     if hours < 0 {
         anyhow::bail!("Hours must be non-negative");
     }
-    let minutes = parts.next().context("Use HH:MM:SS.mmm timecode")?.parse::<i64>().context("Invalid minutes")?;
+    let minutes = parts
+        .next()
+        .context("Use HH:MM:SS.mmm timecode")?
+        .parse::<i64>()
+        .context("Invalid minutes")?;
     if !(0..60).contains(&minutes) {
         anyhow::bail!("Minutes must be between 0 and 59");
     }
     let seconds = finite_non_negative_seconds(
-        parts.next().context("Use HH:MM:SS.mmm timecode")?.parse::<f64>().context("Invalid seconds")?,
+        parts
+            .next()
+            .context("Use HH:MM:SS.mmm timecode")?
+            .parse::<f64>()
+            .context("Invalid seconds")?,
         "Seconds",
     )?;
     if seconds >= 60.0 {
@@ -277,8 +287,7 @@ pub fn total_enabled_duration(segments: &[RewrapSegment]) -> i64 {
 pub const KEYFRAME_TOLERANCE_MS: i64 = 2;
 
 pub fn is_known_keyframe(keyframes: &[i64], ms: i64) -> bool {
-    nearest_keyframe(keyframes, ms)
-        .is_some_and(|snap| snap.distance_ms <= KEYFRAME_TOLERANCE_MS)
+    nearest_keyframe(keyframes, ms).is_some_and(|snap| snap.distance_ms <= KEYFRAME_TOLERANCE_MS)
 }
 
 pub fn validate_segment(segment: &RewrapSegment, keyframes: &[i64]) -> Result<()> {

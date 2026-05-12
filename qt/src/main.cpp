@@ -6,6 +6,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <QUrl>
 
 int main(int argc, char *argv[])
 {
@@ -28,7 +29,7 @@ int main(int argc, char *argv[])
         &app,
         [] { QCoreApplication::exit(-1); },
         Qt::QueuedConnection);
-    engine.loadFromModule("Seder.VideoRewrap", "Main");
+    engine.load(QUrl(QStringLiteral("qrc:/qt/qml/Main.qml")));
 
     return app.exec();
 }
