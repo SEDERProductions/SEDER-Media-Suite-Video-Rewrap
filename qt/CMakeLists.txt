@@ -45,7 +45,6 @@ qt_add_executable(seder-video-rewrap
     src/ProcessUtil.cpp
     src/RustBridge.cpp
     src/SegmentTableModel.cpp
-    resources.qrc
     ${SEDER_APP_PLATFORM_SOURCES}
 )
 
@@ -79,6 +78,13 @@ if(APPLE)
         "-framework SystemConfiguration"
     )
 endif()
+
+qt_add_qml_module(seder-video-rewrap
+    URI Seder.VideoRewrap
+    VERSION 1.0
+    QML_FILES
+        qml/Main.qml
+)
 
 enable_testing()
 
