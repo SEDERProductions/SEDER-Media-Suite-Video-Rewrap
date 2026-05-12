@@ -39,7 +39,7 @@ int main(int argc, char *argv[])
             if (!obj) QCoreApplication::exit(-1);
         },
         Qt::QueuedConnection);
-    engine.load(QUrl(QStringLiteral("qrc:/Seder.VideoRewrap/qml/Main.qml")));
+    engine.load(QUrl(QStringLiteral("qrc:/qt/qml/Seder/VideoRewrap/qml/Main.qml")));
 #endif
 
     return app.exec();
