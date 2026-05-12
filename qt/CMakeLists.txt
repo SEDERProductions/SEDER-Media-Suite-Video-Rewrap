@@ -22,11 +22,14 @@ add_custom_target(seder_video_rewrap_core ALL
 )
 
 set(SEDER_APP_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../assets/icon.ico")
+set(SEDER_APP_ICON_MACOS "${CMAKE_CURRENT_SOURCE_DIR}/../assets/icon.icns")
 
-# CMake builds a flat executable on macOS; scripts/package-release.mjs assembles the
-# .app bundle from scratch (Info.plist, icon.icns, codesign). Keeping the CMake build
-# bundle-free avoids two divergent bundle layouts for one binary.
 set(SEDER_APP_PLATFORM_SOURCES "")
+if(APPLE AND EXISTS "${SEDER_APP_ICON_MACOS}")
+    set_source_files_properties("${SEDER_APP_ICON_MACOS}" PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources")
+    list(APPEND SEDER_APP_PLATFORM_SOURCES "${SEDER_APP_ICON_MACOS}")
+endif()
 if(WIN32 AND EXISTS "${SEDER_APP_ICON_PATH}")
     # Copy the icon next to the generated app.rc so RC.exe sees a simple
     # relative path without any forward/backslash translation issues.
@@ -37,6 +40,7 @@ if(WIN32 AND EXISTS "${SEDER_APP_ICON_PATH}")
 endif()
 
 qt_add_executable(seder-video-rewrap
+    MACOSX_BUNDLE
     WIN32
     src/main.cpp
     src/AppController.cpp
@@ -77,6 +81,11 @@ if(APPLE)
     target_link_libraries(seder-video-rewrap PRIVATE
         "-framework Security"
         "-framework SystemConfiguration"
+    )
+    set_target_properties(seder-video-rewrap PROPERTIES
+        MACOSX_BUNDLE_GUI_IDENTIFIER com.sederproductions.media-suite.video-rewrap
+        MACOSX_BUNDLE_BUNDLE_NAME "SEDER Media Suite Video Rewrap"
+        MACOSX_BUNDLE_ICON_FILE icon.icns
     )
 endif()
 
