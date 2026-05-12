@@ -80,13 +80,6 @@ if(APPLE)
     )
 endif()
 
-qt_add_qml_module(seder-video-rewrap
-    URI Seder.VideoRewrap
-    VERSION 1.0
-    QML_FILES
-        qml/Main.qml
-)
-
 enable_testing()
 
 qt_add_executable(segment-model-tests
