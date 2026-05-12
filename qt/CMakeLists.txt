@@ -87,15 +87,19 @@ qt_add_qml_module(seder-video-rewrap
         qml/Main.qml
 )
 
-qt_generate_deploy_qml_app_script(
-    TARGET seder-video-rewrap
-    OUTPUT_SCRIPT seder_deploy_script
-    NO_UNSUPPORTED_PLATFORM_ERROR
-)
-install(TARGETS seder-video-rewrap
-    BUNDLE DESTINATION .
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
+if(Qt6_VERSION VERSION_GREATER_EQUAL "6.5.0")
+    qt_generate_deploy_qml_app_script(
+        TARGET seder-video-rewrap
+        OUTPUT_SCRIPT seder_deploy_script
+        NO_UNSUPPORTED_PLATFORM_ERROR
+    )
+else()
+    qt_generate_deploy_qml_app_script(
+        TARGET seder-video-rewrap
+        FILENAME_VARIABLE seder_deploy_script
+        NO_UNSUPPORTED_PLATFORM_ERROR
+    )
+endif()
 install(SCRIPT ${seder_deploy_script})
 
 enable_testing()
