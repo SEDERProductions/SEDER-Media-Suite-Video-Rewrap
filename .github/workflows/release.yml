@@ -144,8 +144,11 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           mkdir -p dist/bin
-          exe=$(find qt/build/release -name 'seder-video-rewrap*' -type f -not -name '*.pdb' | head -1)
-          cp "$exe" dist/bin/
+          exe=$(find qt/build/release -name 'seder-video-rewrap' -type f -not -path '*.o.d' | head -1)
+          if [ -z "$exe" ]; then exe=$(find qt/build/release -name 'seder-video-rewrap.exe' -type f | head -1); fi
+          if [ -z "$exe" ]; then exe=$(find qt/build/release -path '*/seder-video-rewrap.app' -type d | head -1); fi
+          echo "Found executable: $exe"
+          cp -a "$exe" dist/bin/ 2>/dev/null || true
           cmake --install qt/build/release --config Release
 
       - name: Package (Windows)
@@ -180,7 +183,7 @@ jobs:
           if [ -f /usr/local/bin/linuxdeploy-x86_64.AppImage ]; then
             export APPIMAGE_EXTRACT_AND_RUN=1
             mkdir -p "$name/usr/bin" "$name/usr/share/applications"
-            exe=$(find dist -name seder-video-rewrap -type f -print -quit)
+            exe=$(find dist -name seder-video-rewrap -type f -not -name '*.o.d' -print -quit)
             if [ -z "$exe" ]; then echo "No executable found in dist"; exit 1; fi
             cp "$exe" "$name/usr/bin/"
             printf '[Desktop Entry]\nType=Application\nName=SEDER Media Suite Video Rewrap\nExec=seder-video-rewrap\nCategories=AudioVideo;\nTerminal=false\n' \
