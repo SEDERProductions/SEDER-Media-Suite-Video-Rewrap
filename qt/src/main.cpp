@@ -28,7 +28,8 @@ int main(int argc, char *argv[])
         &app,
         [] { QCoreApplication::exit(-1); },
         Qt::QueuedConnection);
-    engine.loadFromModule("Seder.VideoRewrap", "Main");
+    engine.addImportPath(QCoreApplication::applicationDirPath() + QStringLiteral("/../.."));
+    engine.load(QUrl(QStringLiteral("qrc:/Seder/VideoRewrap/qml/Main.qml")));
 
     return app.exec();
 }

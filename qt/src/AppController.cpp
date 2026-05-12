@@ -8,10 +8,10 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonDocument>
+#include <QPalette>
 #include <QProcess>
 #include <QSettings>
 #include <QStandardPaths>
-#include <QStyleHints>
 #include <QThread>
 #include <algorithm>
 
@@ -22,11 +22,6 @@ AppController::AppController(SegmentTableModel *segments, QObject *parent)
     QSettings settings;
     m_theme = settings.value("theme", "system").toString();
     setTheme(m_theme);
-    connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this, [this] {
-        if (m_theme == "system") {
-            setTheme("system");
-        }
-    });
     recheckToolsBackground();
 }
 
@@ -530,8 +525,11 @@ void AppController::toggleSegment(int row, bool enabled)
 void AppController::setTheme(const QString &theme)
 {
     const QString normalized = (theme == "light" || theme == "dark") ? theme : QStringLiteral("system");
-    const bool dark = normalized == "dark"
-        || (normalized == "system" && QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark);
+    bool dark = normalized == "dark";
+    if (normalized == "system") {
+        const QPalette palette = QGuiApplication::palette();
+        dark = palette.color(QPalette::Base).lightness() < 128;
+    }
     const bool changed = normalized != m_theme || dark != m_darkMode;
     m_theme = normalized;
     m_darkMode = dark;
