@@ -119,33 +119,77 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.7.*'
+          version: '6.4.2'
           cache: true
 
-      - name: Install npm dependencies
-        run: npm ci
+      - name: Configure
+        run: cmake -S qt -B qt/build/release -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=dist
 
-      - name: Build release package
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: 1
-        run: npm run package:release 2>&1 | tee build.log
+      - name: Build
+        run: cmake --build qt/build/release --config Release
 
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: build-log-${{ matrix.os }}
-          path: build.log
-          if-no-files-found: ignore
+      - name: Install (deploys Qt runtime)
+        run: cmake --install qt/build/release --config Release
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "seder-video-rewrap-${{ steps.vars.outputs.tag }}-windows-x64"
+          $stage = "release/$name"
+          New-Item -ItemType Directory -Force -Path $stage
+          Copy-Item -Path dist/bin/* -Destination $stage -Recurse -Force
+          Compress-Archive -Path "$stage/*" -DestinationPath "release/$name.zip" -Force
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          app=$(find dist -maxdepth 2 -name '*.app' -type d -print -quit || echo "")
+          if [ -n "$app" ]; then
+            codesign --force --deep --sign - --timestamp=none "$app"
+            name="seder-video-rewrap-${{ steps.vars.outputs.tag }}-macos-arm64"
+            mkdir -p release
+            ditto -c -k --keepParent "$app" "release/$name.zip"
+          else
+            echo "No .app bundle found"; exit 1
+          fi
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          name="seder-video-rewrap-${{ steps.vars.outputs.tag }}-linux-x64"
+          mkdir -p release
+          if [ -f /usr/local/bin/linuxdeploy-x86_64.AppImage ]; then
+            export APPIMAGE_EXTRACT_AND_RUN=1
+            mkdir -p "$name/usr/bin" "$name/usr/share/applications"
+            cp dist/bin/seder-video-rewrap "$name/usr/bin/"
+            printf '[Desktop Entry]\nType=Application\nName=SEDER Media Suite Video Rewrap\nExec=seder-video-rewrap\nCategories=AudioVideo;\nTerminal=false\n' \
+              > "$name/usr/share/applications/seder-video-rewrap.desktop"
+            /usr/local/bin/linuxdeploy-x86_64.AppImage --appdir "$name" \
+              --plugin qt --output appimage || true
+            appimage=$(find . -maxdepth 1 -name '*.AppImage' -print -quit)
+            if [ -n "$appimage" ]; then
+              mv "$appimage" "release/$name.AppImage"
+            fi
+          fi
+          # Fallback: plain archive
+          if [ ! -f "release/$name.AppImage" ] && [ ! -f "release/$name.zip" ]; then
+            cd dist && zip -r "../release/$name.zip" .
+          fi
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd release
+          for f in *; do
+            if [ -f "$f" ] && [ "$f" != "SHA256SUMS.txt" ]; then
+              sha256sum "$f" >> SHA256SUMS.txt
+            fi
+          done
+          cat SHA256SUMS.txt
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v7

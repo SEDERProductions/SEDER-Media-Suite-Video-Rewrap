@@ -8,7 +8,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Quick QuickControls2 Widgets Test)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Widgets Test)
 
 set(RUST_TARGET_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../target)
 set(RUST_CORE_LIBRARY ${RUST_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}seder_video_rewrap${CMAKE_STATIC_LIBRARY_SUFFIX})
@@ -58,6 +58,7 @@ target_include_directories(seder-video-rewrap PRIVATE
 target_link_libraries(seder-video-rewrap PRIVATE
     Qt6::Core
     Qt6::Gui
+    Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2
     Qt6::Widgets
@@ -85,6 +86,17 @@ qt_add_qml_module(seder-video-rewrap
     QML_FILES
         qml/Main.qml
 )
+
+qt_generate_deploy_qml_app_script(
+    TARGET seder-video-rewrap
+    OUTPUT_SCRIPT seder_deploy_script
+    NO_UNSUPPORTED_PLATFORM_ERROR
+)
+install(TARGETS seder-video-rewrap
+    BUNDLE DESTINATION .
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+install(SCRIPT ${seder_deploy_script})
 
 enable_testing()
 
