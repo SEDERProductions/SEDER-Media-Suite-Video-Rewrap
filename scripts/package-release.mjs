@@ -10,11 +10,11 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const releaseDir = join(root, 'release');
 const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const ref = process.env.GITHUB_REF_NAME || '';
