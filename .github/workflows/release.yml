@@ -141,7 +141,8 @@ jobs:
           $name = "seder-video-rewrap-${{ steps.vars.outputs.tag }}-windows-x64"
           $stage = "release/$name"
           New-Item -ItemType Directory -Force -Path $stage
-          Copy-Item -Path dist/bin/* -Destination $stage -Recurse -Force
+          Get-ChildItem dist -Recurse -Name
+          Copy-Item -Path dist/* -Destination $stage -Recurse -Force
           Compress-Archive -Path "$stage/*" -DestinationPath "release/$name.zip" -Force
 
       - name: Package (macOS)
@@ -149,7 +150,6 @@ jobs:
         run: |
           app=$(find dist -maxdepth 2 -name '*.app' -type d -print -quit || echo "")
           if [ -n "$app" ]; then
-            codesign --force --deep --sign - --timestamp=none "$app"
             name="seder-video-rewrap-${{ steps.vars.outputs.tag }}-macos-arm64"
             mkdir -p release
             ditto -c -k --keepParent "$app" "release/$name.zip"
@@ -162,10 +162,14 @@ jobs:
         run: |
           name="seder-video-rewrap-${{ steps.vars.outputs.tag }}-linux-x64"
           mkdir -p release
+          echo "dist contents:"
+          find dist -type f | head -20
           if [ -f /usr/local/bin/linuxdeploy-x86_64.AppImage ]; then
             export APPIMAGE_EXTRACT_AND_RUN=1
             mkdir -p "$name/usr/bin" "$name/usr/share/applications"
-            cp dist/bin/seder-video-rewrap "$name/usr/bin/"
+            exe=$(find dist -name seder-video-rewrap -type f -print -quit)
+            if [ -z "$exe" ]; then echo "No executable found in dist"; exit 1; fi
+            cp "$exe" "$name/usr/bin/"
             printf '[Desktop Entry]\nType=Application\nName=SEDER Media Suite Video Rewrap\nExec=seder-video-rewrap\nCategories=AudioVideo;\nTerminal=false\n' \
               > "$name/usr/share/applications/seder-video-rewrap.desktop"
             /usr/local/bin/linuxdeploy-x86_64.AppImage --appdir "$name" \
@@ -175,7 +179,6 @@ jobs:
               mv "$appimage" "release/$name.AppImage"
             fi
           fi
-          # Fallback: plain archive
           if [ ! -f "release/$name.AppImage" ] && [ ! -f "release/$name.zip" ]; then
             cd dist && zip -r "../release/$name.zip" .
           fi
