@@ -227,6 +227,11 @@ function packageWindows(executable, outputRoot) {
   execFileSync(windeployqt, ['--release', '--qmldir', join(root, 'qt', 'qml'), join(stage, `${app.packageName}.exe`)], {
     stdio: 'inherit',
   });
+  const qtConf = join(stage, 'qt.conf');
+  if (!existsSync(qtConf)) {
+    console.log(`[package] Creating ${qtConf}`);
+    writeFileSync(qtConf, '[Paths]\r\nPlugins = .\r\n');
+  }
   const vcDlls = findVcRedistDlls();
   if (vcDlls.length > 0) {
     console.log(`[package] Copying VC++ runtime DLLs to ${stage}`);
