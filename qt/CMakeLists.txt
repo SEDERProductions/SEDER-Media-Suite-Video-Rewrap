@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(SederVideoRewrapQt VERSION 0.1.27 LANGUAGES CXX)
+project(SederVideoRewrapQt VERSION 0.1.28 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -91,6 +91,7 @@ endif()
 qt_add_qml_module(seder-video-rewrap
     URI Seder.VideoRewrap
     VERSION 1.0
+    RESOURCE_PREFIX "/qt/qml"
     QML_FILES
         qml/Main.qml
 )

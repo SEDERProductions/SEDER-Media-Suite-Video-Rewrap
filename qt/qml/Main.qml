@@ -75,7 +75,6 @@ ApplicationWindow {
     component MetaLabel: Label {
         color: faint
         font.family: root.monoFontFamily
-        font.styleHint: Font.Monospace
         font.pixelSize: 10
         font.capitalization: Font.AllUppercase
         elide: Text.ElideRight
@@ -84,7 +83,6 @@ ApplicationWindow {
     component PathLabel: Label {
         color: muted
         font.family: root.monoFontFamily
-        font.styleHint: Font.Monospace
         font.pixelSize: 12
         elide: Text.ElideMiddle
         wrapMode: Text.NoWrap
@@ -114,7 +112,6 @@ ApplicationWindow {
             text: statusPill.stateIcon + " " + statusPill.text
             color: statusPill.tone
             font.family: root.monoFontFamily
-            font.styleHint: Font.Monospace
             font.pixelSize: 10
             font.capitalization: Font.AllUppercase
         }
@@ -225,7 +222,6 @@ ApplicationWindow {
                 Layout.minimumWidth: 72
                 Layout.maximumWidth: 96
                 Layout.fillWidth: true
-                Layout.horizontalStretchFactor: 1
                 Layout.fillHeight: true
                 color: panel
                 border.color: line
@@ -259,7 +255,6 @@ ApplicationWindow {
                 Layout.minimumWidth: 280
                 Layout.maximumWidth: 460
                 Layout.fillWidth: true
-                Layout.horizontalStretchFactor: 4
                 Layout.fillHeight: true
                 clip: true
                 background: Rectangle { color: panel; border.color: line }
@@ -343,7 +338,6 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.minimumWidth: 460
-                Layout.horizontalStretchFactor: 9
                 contentWidth: width
                 contentHeight: workspace.implicitHeight + 24
                 clip: true
@@ -452,7 +446,7 @@ ApplicationWindow {
                             }
                             Row {
                                 Layout.fillWidth: true
-                                implicitHeight: 28
+                                height: 28
                                 Repeater {
                                     model: ["Enabled", "Segment Name", "In Marker", "Out Marker", "Duration", "Notes"]
                                     Rectangle {
@@ -501,7 +495,6 @@ ApplicationWindow {
                                         text: display
                                         color: column === 0 && display === "OFF" ? root.faint : root.ink
                                         font.family: column >= 2 ? root.monoFontFamily : root.uiFontFamily
-                                        font.styleHint: column >= 2 ? Font.Monospace : Font.SansSerif
                                         font.pixelSize: 12
                                         elide: Text.ElideRight
                                     }
