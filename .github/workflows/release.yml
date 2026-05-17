@@ -62,10 +62,14 @@ jobs:
           # Update package.json
           sed -i -E 's/"version": "[^"]+"/"version": "'"${major}.${minor}.${new_patch}"'"/' package.json
 
+          # Update qt/CMakeLists.txt project version (the Qt build target stays
+          # in lock-step with Cargo/npm; this prevents the drift seen in PRs #20.)
+          sed -i -E 's/^(project\(SederVideoRewrapQt VERSION )[^ ]+/\1'"${major}.${minor}.${new_patch}"'/' qt/CMakeLists.txt
+
           # Update Cargo.lock so package metadata stays consistent with Cargo.toml.
           cargo generate-lockfile
 
-          git add Cargo.toml Cargo.lock package.json
+          git add Cargo.toml Cargo.lock package.json qt/CMakeLists.txt
           git diff --cached --quiet || git commit -m "chore: bump version to ${new_tag}"
           git tag "$new_tag"
           git push origin HEAD:refs/heads/main
