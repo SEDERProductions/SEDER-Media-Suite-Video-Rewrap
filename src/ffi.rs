@@ -1,9 +1,10 @@
 use crate::media_core::video_rewrap::{
-    ffmpeg_concat_command, ffmpeg_segment_command, ffplay_preview_command,
-    ffprobe_keyframe_command, ffprobe_metadata_command, format_ms, nearest_keyframe,
-    output_extension, parse_ffprobe_keyframes, parse_ffprobe_metadata, parse_timecode_to_ms,
-    rewrap_preflight, rewrap_report_csv, rewrap_report_txt, temp_segment_path, validate_segments,
-    ExportMode, RewrapProject, RewrapSegment, VideoMetadata, CURRENT_PROJECT_VERSION,
+    evaluate_update, ffmpeg_compatibility, ffmpeg_concat_command, ffmpeg_segment_command,
+    ffplay_preview_command, ffprobe_keyframe_command, ffprobe_metadata_command, format_ms,
+    nearest_keyframe, output_extension, parse_ffprobe_keyframes, parse_ffprobe_metadata,
+    parse_project_json, parse_timecode_to_ms, rewrap_preflight, rewrap_report_csv,
+    rewrap_report_txt, temp_segment_path, validate_segments, ExportMode, RewrapProject,
+    RewrapSegment, VideoMetadata, CURRENT_PROJECT_VERSION,
 };
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
@@ -315,9 +316,29 @@ pub extern "C" fn svr_project_json(
 pub extern "C" fn svr_parse_project_json(project_json: *const c_char) -> *mut c_char {
     response((|| {
         let project_json = input(project_json, "project_json")?;
-        let project: RewrapProject =
-            serde_json::from_str(&project_json).context("Invalid project JSON")?;
+        let project = parse_project_json(&project_json)?;
         Ok(json!({ "project": project }))
+    })())
+}
+
+#[no_mangle]
+pub extern "C" fn svr_ffmpeg_compatibility(version_output: *const c_char) -> *mut c_char {
+    response((|| {
+        let output = input(version_output, "version_output")?;
+        Ok(json!({ "compatibility": ffmpeg_compatibility(&output) }))
+    })())
+}
+
+#[no_mangle]
+pub extern "C" fn svr_evaluate_update(
+    latest_json: *const c_char,
+    current_version: *const c_char,
+) -> *mut c_char {
+    response((|| {
+        let latest_json = input(latest_json, "latest_json")?;
+        let current_version = input(current_version, "current_version")?;
+        let info = evaluate_update(&latest_json, &current_version)?;
+        Ok(json!({ "update": info }))
     })())
 }
 
