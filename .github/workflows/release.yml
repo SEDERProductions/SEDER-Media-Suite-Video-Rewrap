@@ -53,6 +53,25 @@ jobs:
             major=0; minor=1; new_patch=0
           fi
 
+          # If Cargo.toml has been bumped past the auto-patch (major/minor
+          # release), honour the manifest instead of clobbering it. This lets
+          # us land a 1.0.0 / 1.1.0 bump on main without fighting the auto
+          # patch step.
+          cargo_version=$(grep -E '^version = "' Cargo.toml | head -1 | sed -E 's/version = "([^"]+)"/\1/')
+          if [[ "$cargo_version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            cmaj="${BASH_REMATCH[1]}"
+            cmin="${BASH_REMATCH[2]}"
+            cpat="${BASH_REMATCH[3]}"
+            # Compare: cargo > current candidate?
+            if [ "$cmaj" -gt "$major" ] \
+              || { [ "$cmaj" -eq "$major" ] && [ "$cmin" -gt "$minor" ]; } \
+              || { [ "$cmaj" -eq "$major" ] && [ "$cmin" -eq "$minor" ] && [ "$cpat" -gt "$new_patch" ]; }; then
+              major="$cmaj"; minor="$cmin"; new_patch="$cpat"
+              new_tag="v${major}.${minor}.${new_patch}"
+              echo "Using Cargo.toml version: $new_tag"
+            fi
+          fi
+
           echo "release_tag=$new_tag" >> "$GITHUB_OUTPUT"
           echo "New tag: $new_tag"
 
@@ -173,6 +192,14 @@ jobs:
         run: |
           name="seder-video-rewrap-${{ steps.vars.outputs.tag }}-linux-x64"
           mkdir -p release
+          # Include the .desktop file and a 256px icon at the standard XDG
+          # paths so file managers and app launchers pick them up after
+          # unzipping into /opt/seder-video-rewrap or similar.
+          mkdir -p dist/share/applications dist/share/icons/hicolor/256x256/apps
+          cp assets/seder-video-rewrap.desktop dist/share/applications/
+          if [ -f assets/icon-256.png ]; then
+            cp assets/icon-256.png dist/share/icons/hicolor/256x256/apps/seder-video-rewrap.png
+          fi
           cd dist && zip -r "../release/$name.zip" .
 
       - name: Generate checksums
@@ -207,6 +234,8 @@ jobs:
           if [ -z "$tag" ]; then tag="${{ needs.tag.outputs.release_tag }}"; fi
           if [ -z "$tag" ]; then tag="${{ github.ref_name }}"; fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          # The update channel compares semver, not the v-prefixed tag.
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
           echo "Release tag: $tag"
 
       - name: Download all artifacts
@@ -232,6 +261,22 @@ jobs:
             fi
           done
           cat SHA256SUMS.txt
+
+      - name: Generate latest.json for in-app update channel
+        shell: bash
+        run: |
+          tag="${{ steps.vars.outputs.tag }}"
+          version="${{ steps.vars.outputs.version }}"
+          release_url="https://github.com/${{ github.repository }}/releases/tag/${tag}"
+          cat > artifacts/latest.json <<EOF
+          {
+            "version": "${version}",
+            "tag": "${tag}",
+            "url": "${release_url}",
+            "published_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          cat artifacts/latest.json
 
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v3

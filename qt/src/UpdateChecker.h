@@ -32,6 +32,7 @@ public:
     QString lastMessage() const { return m_lastMessage; }
 
     void setEndpointForTesting(const QString &url) { m_endpoint = url; }
+    void setCurrentVersionForTesting(const QString &version) { m_currentVersion = version; }
     void evaluatePayloadForTesting(const QByteArray &body);
 
     Q_INVOKABLE void checkNow();
