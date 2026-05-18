@@ -74,6 +74,15 @@ bool looksLikeProjectFile(const QString &path)
     }
     return false;
 }
+
+QString urlOrPathToLocal(const QString &value)
+{
+    if (value.isEmpty()) return value;
+    if (value.startsWith("file:")) {
+        return QUrl(value).toLocalFile();
+    }
+    return value;
+}
 }
 
 AppController::AppController(SegmentTableModel *segments, QObject *parent)
@@ -124,7 +133,7 @@ AppController::AppController(SegmentTableModel *segments, QObject *parent)
     setTheme(m_theme);
     m_probeEngine->recheckBackground();
 
-    if (m_updateChecker->checkOnLaunch()) {
+    if (m_updateChecker->checkOnLaunch() && qEnvironmentVariableIsEmpty("SEDER_DISABLE_UPDATE_CHECK")) {
         m_updateChecker->checkNow();
     }
 
@@ -628,10 +637,7 @@ void AppController::redo()
 
 void AppController::handleDroppedFile(const QString &url)
 {
-    QString path = url;
-    if (path.startsWith("file://")) {
-        path = QUrl(path).toLocalFile();
-    }
+    const QString path = urlOrPathToLocal(url);
     if (path.isEmpty() || !QFileInfo::exists(path)) {
         setLogText(tr("Dropped file does not exist: %1").arg(path));
         return;
@@ -645,8 +651,9 @@ void AppController::handleDroppedFile(const QString &url)
 
 void AppController::setCustomFfmpegDir(const QString &dir)
 {
-    if (m_customFfmpegDir == dir) return;
-    m_customFfmpegDir = dir;
+    const QString normalized = urlOrPathToLocal(dir);
+    if (m_customFfmpegDir == normalized) return;
+    m_customFfmpegDir = normalized;
     QSettings().setValue(kCustomFfmpegDirKey, m_customFfmpegDir);
     applyCustomFfmpegDirToEnvironment();
     m_probeEngine->recheckTools();

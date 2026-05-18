@@ -179,6 +179,19 @@ ApplicationWindow {
         }
     }
 
+    // True while a text input owns focus. Single-letter and bare-Delete
+    // shortcuts must defer to typing — without this guard, typing into
+    // Notes would delete the selected segment.
+    function isTextInputFocused() {
+        var item = root.activeFocusItem
+        if (!item) return false
+        var name = item.toString()
+        return name.indexOf("QQuickTextField") >= 0
+            || name.indexOf("QQuickTextInput") >= 0
+            || name.indexOf("QQuickTextEdit") >= 0
+            || name.indexOf("QQuickTextArea") >= 0
+    }
+
     // ---- Global keyboard shortcuts ----
     Shortcut { sequence: StandardKey.Open;          onActivated: app.openSource() }
     Shortcut { sequence: "Ctrl+Shift+O";            onActivated: app.loadProject() }
@@ -187,14 +200,52 @@ ApplicationWindow {
     Shortcut { sequence: StandardKey.Undo;          onActivated: app.undo() }
     Shortcut { sequence: StandardKey.Redo;          onActivated: app.redo() }
     Shortcut { sequence: "Ctrl+Shift+Z";            onActivated: app.redo() }
-    Shortcut { sequence: StandardKey.Delete;        onActivated: if (app.selectedRow >= 0) app.removeSegment(app.selectedRow) }
-    Shortcut { sequence: "Space";                   onActivated: if (app.selectedRow >= 0) app.toggleSegment(app.selectedRow, !segmentModel.data(segmentModel.index(app.selectedRow, 0), 257)) }
-    Shortcut { sequence: StandardKey.MoveToNextLine;     onActivated: app.selectSegment(Math.min(segmentModel.rowCount() - 1, app.selectedRow + 1)) }
-    Shortcut { sequence: StandardKey.MoveToPreviousLine; onActivated: app.selectSegment(Math.max(0, app.selectedRow - 1)) }
-    Shortcut { sequence: "I";                       onActivated: app.setIn() }
-    Shortcut { sequence: "O";                       onActivated: app.setOut() }
-    Shortcut { sequence: ",";                       onActivated: app.previousKeyframe() }
-    Shortcut { sequence: ".";                       onActivated: app.nextKeyframe() }
+    Shortcut {
+        sequence: StandardKey.Delete
+        enabled: !root.isTextInputFocused()
+        onActivated: if (app.selectedRow >= 0) app.removeSegment(app.selectedRow)
+    }
+    Shortcut {
+        sequence: "Space"
+        enabled: !root.isTextInputFocused()
+        onActivated: {
+            if (app.selectedRow < 0) return
+            var idx = segmentModel.index(app.selectedRow, 0)
+            // EnabledRole = Qt::UserRole + 1
+            var currentlyEnabled = segmentModel.data(idx, Qt.UserRole + 1)
+            app.toggleSegment(app.selectedRow, !currentlyEnabled)
+        }
+    }
+    Shortcut {
+        sequence: StandardKey.MoveToNextLine
+        enabled: !root.isTextInputFocused()
+        onActivated: app.selectSegment(Math.min(segmentModel.rowCount() - 1, app.selectedRow + 1))
+    }
+    Shortcut {
+        sequence: StandardKey.MoveToPreviousLine
+        enabled: !root.isTextInputFocused()
+        onActivated: app.selectSegment(Math.max(0, app.selectedRow - 1))
+    }
+    Shortcut {
+        sequence: "I"
+        enabled: !root.isTextInputFocused()
+        onActivated: app.setIn()
+    }
+    Shortcut {
+        sequence: "O"
+        enabled: !root.isTextInputFocused()
+        onActivated: app.setOut()
+    }
+    Shortcut {
+        sequence: ","
+        enabled: !root.isTextInputFocused()
+        onActivated: app.previousKeyframe()
+    }
+    Shortcut {
+        sequence: "."
+        enabled: !root.isTextInputFocused()
+        onActivated: app.nextKeyframe()
+    }
 
     // ---- Dialogs ----
     Dialog {
@@ -260,23 +311,19 @@ ApplicationWindow {
     FolderDialog {
         id: ffmpegFolderDialog
         title: qsTr("Select FFmpeg folder")
-        onAccepted: {
-            var p = selectedFolder.toString()
-            if (p.startsWith("file://")) p = p.substring(7)
-            app.setCustomFfmpegDir(p)
-        }
+        onAccepted: app.setCustomFfmpegDir(selectedFolder.toString())
     }
 
     Dialog {
         id: errorDialog
-        title: qsTr("Export Failed")
+        title: qsTr("Error Details")
         modal: true
         anchors.centerIn: parent
         standardButtons: Dialog.Close
         width: Math.min(720, root.width - 80)
         contentItem: ColumnLayout {
             spacing: 8
-            Label { text: qsTr("The export did not complete. Details below — share these with support if you need help."); color: muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Label { text: qsTr("The most recent operation did not complete. Details below — share these with support if you need help."); color: muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             ScrollView {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 220

@@ -6,7 +6,6 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
-#include <QSettings>
 #include <QStringList>
 
 #ifndef SEDER_APP_VERSION
@@ -22,12 +21,13 @@ int main(int argc, char *argv[])
     QApplication::setApplicationVersion(QStringLiteral(SEDER_APP_VERSION));
     QQuickStyle::setStyle(QStringLiteral("Fusion"));
 
-    // CLI: --no-update-check disables the launch-time update probe without
-    // touching the persisted preference. Useful for CI smoke runs and for
-    // offline builds.
+    // CLI: --no-update-check disables the launch-time update probe for THIS
+    // run only (without touching the persisted preference). The flag also
+    // works for CI smoke runs and offline builds. AppController reads the
+    // env var below in its constructor.
     const QStringList args = QApplication::arguments();
     if (args.contains(QStringLiteral("--no-update-check"))) {
-        QSettings().setValue("update/checkOnLaunch", false);
+        qputenv("SEDER_DISABLE_UPDATE_CHECK", "1");
     }
 
     SegmentTableModel segmentModel;
