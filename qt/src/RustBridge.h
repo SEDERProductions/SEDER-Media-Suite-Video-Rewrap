@@ -51,6 +51,8 @@ public:
         const QString &output,
         const QJsonArray &segments,
         const QString &exportMode);
+    static QJsonObject ffmpegCompatibility(const QString &versionOutput);
+    static QJsonObject evaluateUpdate(const QString &latestJson, const QString &currentVersion);
     static Command commandFromJson(const QJsonObject &object);
 
 private:

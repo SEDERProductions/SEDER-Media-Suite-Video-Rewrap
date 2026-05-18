@@ -17,6 +17,24 @@ bool ProcessUtil::programExists(const QString &program)
     return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
 }
 
+QString ProcessUtil::programVersionOutput(const QString &program)
+{
+    QProcess process;
+    process.start(program, { "-version" });
+    if (!process.waitForStarted(1000)) {
+        return {};
+    }
+    if (!process.waitForFinished(1500)) {
+        process.kill();
+        process.waitForFinished();
+        return {};
+    }
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        return {};
+    }
+    return QString::fromUtf8(process.readAllStandardOutput());
+}
+
 ProcessResult ProcessUtil::runCommand(const QString &program, const QStringList &args, std::atomic_bool *cancel)
 {
     ProcessResult result;

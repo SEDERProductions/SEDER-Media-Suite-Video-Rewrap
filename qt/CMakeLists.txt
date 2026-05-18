@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Widgets Test)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 Widgets Test)
 
 set(RUST_TARGET_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../target)
 set(RUST_CORE_LIBRARY ${RUST_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}seder_video_rewrap${CMAKE_STATIC_LIBRARY_SUFFIX})
@@ -46,8 +46,11 @@ qt_add_executable(seder-video-rewrap
     src/ExportEngine.cpp
     src/ProbeEngine.cpp
     src/ProcessUtil.cpp
+    src/RecentFilesModel.cpp
     src/RustBridge.cpp
+    src/SegmentCommands.cpp
     src/SegmentTableModel.cpp
+    src/UpdateChecker.cpp
     ${SEDER_APP_PLATFORM_SOURCES}
 )
 
@@ -58,9 +61,14 @@ target_include_directories(seder-video-rewrap PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
+target_compile_definitions(seder-video-rewrap PRIVATE
+    SEDER_APP_VERSION="${PROJECT_VERSION}"
+)
+
 target_link_libraries(seder-video-rewrap PRIVATE
     Qt6::Core
     Qt6::Gui
+    Qt6::Network
     Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2
@@ -146,8 +154,11 @@ qt_add_executable(app-controller-tests
     src/ExportEngine.cpp
     src/ProbeEngine.cpp
     src/ProcessUtil.cpp
+    src/RecentFilesModel.cpp
     src/RustBridge.cpp
+    src/SegmentCommands.cpp
     src/SegmentTableModel.cpp
+    src/UpdateChecker.cpp
 )
 
 add_dependencies(app-controller-tests seder_video_rewrap_core)
@@ -157,9 +168,14 @@ target_include_directories(app-controller-tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
+target_compile_definitions(app-controller-tests PRIVATE
+    SEDER_APP_VERSION="${PROJECT_VERSION}"
+)
+
 target_link_libraries(app-controller-tests PRIVATE
     Qt6::Core
     Qt6::Gui
+    Qt6::Network
     Qt6::Widgets
     Qt6::Test
     ${RUST_CORE_LIBRARY}
