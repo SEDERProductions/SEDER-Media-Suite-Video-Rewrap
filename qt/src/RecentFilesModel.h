@@ -11,7 +11,7 @@
 class RecentFilesModel : public QAbstractListModel
 {
     Q_OBJECT
-    Q_PROPERTY(int count READ rowCount NOTIFY changed)
+    Q_PROPERTY(int count READ count NOTIFY changed)
 
 public:
     static constexpr int kMaxEntries = 10;
@@ -24,6 +24,7 @@ public:
     explicit RecentFilesModel(const QString &settingsKey, QObject *parent = nullptr);
 
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    int count() const { return m_paths.size(); }
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
     QHash<int, QByteArray> roleNames() const override;
 

@@ -49,7 +49,7 @@ void UpdateChecker::checkNow()
         setMessage(tr("Current application version is unknown; skipping update check."));
         return;
     }
-    QNetworkRequest request(QUrl(m_endpoint));
+    QNetworkRequest request{QUrl(m_endpoint)};
     request.setRawHeader("User-Agent",
         QStringLiteral("seder-video-rewrap/%1").arg(m_currentVersion).toUtf8());
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
