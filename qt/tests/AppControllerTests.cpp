@@ -1,5 +1,8 @@
 #include "AppController.h"
+#include "RecentFilesModel.h"
+#include "UpdateChecker.h"
 
+#include <QSettings>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
 
@@ -186,6 +189,145 @@ private slots:
         QCOMPARE(model.data(model.index(0, 4), SegmentTableModel::DurationTextRole).toString(), QString("00:00:01.000"));
         QCOMPARE(model.data(model.index(1, 4), SegmentTableModel::DurationTextRole).toString(), QString("00:00:03.000"));
         QCOMPARE(model.data(model.index(2, 4), SegmentTableModel::DurationTextRole).toString(), QString("00:00:04.000"));
+    }
+
+    void recentFilesModel_dedupesAndCapsAtMax()
+    {
+        // Use a unique settings key so we don't collide with other tests or
+        // the user's real preferences.
+        const QString key = QStringLiteral("test/recent_%1").arg(QDateTime::currentMSecsSinceEpoch());
+        {
+            RecentFilesModel model(key);
+            model.clear();
+            QCOMPARE(model.rowCount(), 0);
+
+            model.prepend("/tmp/a.mov");
+            model.prepend("/tmp/b.mov");
+            model.prepend("/tmp/a.mov"); // dedupe → a moves to head
+            QCOMPARE(model.rowCount(), 2);
+            QCOMPARE(model.pathAt(0), QString("/tmp/a.mov"));
+            QCOMPARE(model.pathAt(1), QString("/tmp/b.mov"));
+
+            for (int i = 0; i < 20; ++i) {
+                model.prepend(QStringLiteral("/tmp/file_%1.mov").arg(i));
+            }
+            QCOMPARE(model.rowCount(), RecentFilesModel::kMaxEntries);
+        }
+        // Re-loading from settings should restore the list.
+        {
+            RecentFilesModel reloaded(key);
+            QCOMPARE(reloaded.rowCount(), RecentFilesModel::kMaxEntries);
+            reloaded.clear();
+        }
+    }
+
+    void recentFilesModel_removeAndClear()
+    {
+        const QString key = QStringLiteral("test/recent_rm_%1").arg(QDateTime::currentMSecsSinceEpoch());
+        RecentFilesModel model(key);
+        model.clear();
+        model.prepend("/tmp/a");
+        model.prepend("/tmp/b");
+        model.prepend("/tmp/c");
+        QCOMPARE(model.rowCount(), 3);
+
+        model.remove("/tmp/b");
+        QCOMPARE(model.rowCount(), 2);
+        QCOMPARE(model.pathAt(0), QString("/tmp/c"));
+        QCOMPARE(model.pathAt(1), QString("/tmp/a"));
+
+        model.clear();
+        QCOMPARE(model.rowCount(), 0);
+    }
+
+    void undoRedo_addSegmentIsReversible()
+    {
+        SegmentTableModel model;
+        AppController ctrl(&model);
+        ctrl.setKeyframesForTesting({ 0, 1000, 2500, 5000 });
+        ctrl.setIn();   // sets m_pendingIn from current keyframe (index 0 → 0ms)
+        ctrl.nextKeyframe();
+        ctrl.nextKeyframe(); // currentIndex → 2 → 2500ms
+        ctrl.setOut();
+        ctrl.addSegment("X", "");
+        QCOMPARE(model.rowCount(), 1);
+        QVERIFY(ctrl.canUndo());
+
+        ctrl.undo();
+        QCOMPARE(model.rowCount(), 0);
+        QVERIFY(ctrl.canRedo());
+
+        ctrl.redo();
+        QCOMPARE(model.rowCount(), 1);
+    }
+
+    void undoRedo_toggleSegmentRestoresPreviousEnabled()
+    {
+        SegmentTableModel model;
+        AppController ctrl(&model);
+        model.append(SegmentRow { "A", 0, 1000, "", true });
+
+        ctrl.toggleSegment(0, false);
+        QCOMPARE(model.segments().at(0).enabled, false);
+        QVERIFY(ctrl.canUndo());
+
+        ctrl.undo();
+        QCOMPARE(model.segments().at(0).enabled, true);
+
+        ctrl.redo();
+        QCOMPARE(model.segments().at(0).enabled, false);
+    }
+
+    void undoRedo_removeRestoresSnapshot()
+    {
+        SegmentTableModel model;
+        AppController ctrl(&model);
+        model.append(SegmentRow { "A", 0, 1000, "alpha", true });
+        model.append(SegmentRow { "B", 1000, 2000, "bravo", false });
+        QCOMPARE(model.rowCount(), 2);
+
+        ctrl.removeSegment(0);
+        QCOMPARE(model.rowCount(), 1);
+        QCOMPARE(model.segments().at(0).name, QString("B"));
+
+        ctrl.undo();
+        QCOMPARE(model.rowCount(), 2);
+        QCOMPARE(model.segments().at(0).name, QString("A"));
+        QCOMPARE(model.segments().at(0).notes, QString("alpha"));
+    }
+
+    void updateChecker_emitsAvailableForNewerVersion()
+    {
+        UpdateChecker checker;
+        checker.setCurrentVersionForTesting("0.1.29");
+        checker.evaluatePayloadForTesting(
+            QByteArray("{\"version\":\"99.0.0\",\"url\":\"https://example.invalid\"}"));
+        QVERIFY(checker.updateAvailable());
+        QCOMPARE(checker.updateUrl(), QString("https://example.invalid"));
+        QCOMPARE(checker.latestVersion(), QString("99.0.0"));
+
+        checker.dismiss();
+        QVERIFY(!checker.updateAvailable());
+    }
+
+    void updateChecker_reportsUpToDateForOlderRemote()
+    {
+        UpdateChecker checker;
+        checker.setCurrentVersionForTesting("1.0.0");
+        checker.evaluatePayloadForTesting(QByteArray("{\"version\":\"0.0.1\"}"));
+        QVERIFY(!checker.updateAvailable());
+        QVERIFY(!checker.lastMessage().isEmpty());
+    }
+
+    void updateChecker_surfacesErrorOnBadPayload()
+    {
+        UpdateChecker checker;
+        checker.setCurrentVersionForTesting("1.0.0");
+        QSignalSpy spy(&checker, &UpdateChecker::lastMessageChanged);
+        checker.evaluatePayloadForTesting(QByteArray("not json"));
+        QVERIFY(spy.size() >= 1);
+        QVERIFY(checker.lastMessage().contains("failed", Qt::CaseInsensitive));
+        QVERIFY(!checker.updateAvailable());
     }
 };
 

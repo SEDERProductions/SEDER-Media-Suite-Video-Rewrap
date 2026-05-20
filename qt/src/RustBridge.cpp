@@ -234,6 +234,18 @@ QJsonObject RustBridge::rewrapReportCsv(
     return decode(svr_rewrap_report_csv(src.constData(), out.constData(), s.constData(), m.constData()));
 }
 
+QJsonObject RustBridge::ffmpegCompatibility(const QString &versionOutput)
+{
+    return invokeQStr1(svr_ffmpeg_compatibility, versionOutput);
+}
+
+QJsonObject RustBridge::evaluateUpdate(const QString &latestJson, const QString &currentVersion)
+{
+    const QByteArray a = utf8(latestJson);
+    const QByteArray b = utf8(currentVersion);
+    return decode(svr_evaluate_update(a.constData(), b.constData()));
+}
+
 RustBridge::Command RustBridge::commandFromJson(const QJsonObject &object)
 {
     Command command;

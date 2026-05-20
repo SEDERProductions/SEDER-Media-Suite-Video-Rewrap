@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -439,7 +440,192 @@ pub fn save_project(path: &Path, project: &RewrapProject) -> Result<()> {
 pub fn load_project(path: &Path) -> Result<RewrapProject> {
     let json =
         fs::read_to_string(path).with_context(|| format!("Unable to read {}", path.display()))?;
-    Ok(serde_json::from_str(&json)?)
+    parse_project_json(&json)
+}
+
+/// Parses raw project JSON, running any necessary version migrations so the
+/// returned project is always at `CURRENT_PROJECT_VERSION`. Rejects projects
+/// saved by a newer build than this one understands.
+pub fn parse_project_json(json: &str) -> Result<RewrapProject> {
+    let value: Value = serde_json::from_str(json).context("Invalid project JSON")?;
+    let migrated = migrate_project_value(value)?;
+    serde_json::from_value(migrated).context("Project JSON does not match the expected schema")
+}
+
+fn migrate_project_value(mut value: Value) -> Result<Value> {
+    let object = value
+        .as_object_mut()
+        .context("Project JSON must be an object")?;
+    let version = object
+        .get("version")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32)
+        .unwrap_or(0);
+
+    if version > CURRENT_PROJECT_VERSION {
+        anyhow::bail!(
+            "Project was saved by a newer version (file version {version}, expected at most {CURRENT_PROJECT_VERSION}). Update the app to open this project."
+        );
+    }
+
+    // v0 → v1: project predates the `version` field. Defaults already applied
+    // via serde, but stamp the current version so re-saves are unambiguous.
+    if version < 1 {
+        object.insert("version".into(), Value::from(CURRENT_PROJECT_VERSION));
+    }
+
+    Ok(value)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct SemVer {
+    pub major: u32,
+    pub minor: u32,
+    pub patch: u32,
+}
+
+impl SemVer {
+    pub fn zero() -> Self {
+        Self {
+            major: 0,
+            minor: 0,
+            patch: 0,
+        }
+    }
+}
+
+/// Parses a semver-ish string of the form `MAJOR.MINOR.PATCH`, ignoring any
+/// pre-release or build suffix (e.g. `1.2.3-rc1+abc` → `1.2.3`). Also tolerates
+/// a leading `v` (e.g. `v1.2.3`). Returns `None` for unrecognized inputs.
+pub fn parse_semver(value: &str) -> Option<SemVer> {
+    let trimmed = value.trim().trim_start_matches('v');
+    let core = trimmed.split(['-', '+', ' ']).next()?;
+    let mut parts = core.split('.');
+    let major: u32 = parts.next()?.parse().ok()?;
+    let minor: u32 = parts.next().unwrap_or("0").parse().ok()?;
+    let patch: u32 = parts.next().unwrap_or("0").parse().ok()?;
+    Some(SemVer {
+        major,
+        minor,
+        patch,
+    })
+}
+
+/// Extracts the FFmpeg version from the first line of `ffmpeg -version` output.
+/// Real ffmpeg output looks like `ffmpeg version 6.1.1 Copyright (c) ...` or
+/// `ffmpeg version n4.4 Copyright ...` for distro builds. Returns `None` if no
+/// recognizable version token can be parsed.
+pub fn parse_ffmpeg_version(output: &str) -> Option<SemVer> {
+    let first = output.lines().next()?.trim();
+    let rest = first.strip_prefix("ffmpeg version")?.trim();
+    // The version token is the first whitespace-delimited segment.
+    let token = rest.split_whitespace().next()?;
+    // Distro builds prefix with `n` (`n4.4`) or `N-` (git snapshots). Strip those.
+    let stripped = token.trim_start_matches(['n', 'N', 'v']);
+    parse_semver(stripped)
+}
+
+pub const MIN_FFMPEG_VERSION: SemVer = SemVer {
+    major: 4,
+    minor: 0,
+    patch: 0,
+};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FfmpegCompatibility {
+    pub detected: Option<SemVer>,
+    pub minimum: SemVer,
+    pub compatible: bool,
+    pub message: String,
+}
+
+pub fn ffmpeg_compatibility(output: &str) -> FfmpegCompatibility {
+    let detected = parse_ffmpeg_version(output);
+    let compatible = detected.is_some_and(|v| v >= MIN_FFMPEG_VERSION);
+    let message = match detected {
+        Some(v) if compatible => format!(
+            "Detected FFmpeg {}.{}.{} (>= {}.{}.{} required).",
+            v.major,
+            v.minor,
+            v.patch,
+            MIN_FFMPEG_VERSION.major,
+            MIN_FFMPEG_VERSION.minor,
+            MIN_FFMPEG_VERSION.patch,
+        ),
+        Some(v) => format!(
+            "Detected FFmpeg {}.{}.{} which is older than the required {}.{}.{}. Upgrade FFmpeg or point the app at a newer binary.",
+            v.major,
+            v.minor,
+            v.patch,
+            MIN_FFMPEG_VERSION.major,
+            MIN_FFMPEG_VERSION.minor,
+            MIN_FFMPEG_VERSION.patch,
+        ),
+        None => "Unable to determine the FFmpeg version. Verify the binary works on its own and try again.".to_string(),
+    };
+    FfmpegCompatibility {
+        detected,
+        minimum: MIN_FFMPEG_VERSION,
+        compatible,
+        message,
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpdateInfo {
+    pub current: SemVer,
+    pub latest: Option<SemVer>,
+    pub update_available: bool,
+    pub url: String,
+    pub message: String,
+}
+
+/// Compares a `latest.json` payload (as a JSON string with `version` + optional
+/// `url`) against the supplied current version. Returns an `UpdateInfo`
+/// describing whether an upgrade is available.
+pub fn evaluate_update(latest_json: &str, current: &str) -> Result<UpdateInfo> {
+    let current_version =
+        parse_semver(current).context("Current app version is not a valid semver")?;
+    let parsed: Value =
+        serde_json::from_str(latest_json).context("latest.json is not valid JSON")?;
+    let object = parsed
+        .as_object()
+        .context("latest.json must be a JSON object")?;
+    let latest_str = object
+        .get("version")
+        .and_then(|v| v.as_str())
+        .context("latest.json is missing a \"version\" field")?;
+    let latest = parse_semver(latest_str)
+        .with_context(|| format!("latest.json \"version\" is not a valid semver: {latest_str}"))?;
+    let url = object
+        .get("url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let update_available = latest > current_version;
+    let message = if update_available {
+        format!(
+            "Update available: {}.{}.{} (currently {}.{}.{}).",
+            latest.major,
+            latest.minor,
+            latest.patch,
+            current_version.major,
+            current_version.minor,
+            current_version.patch
+        )
+    } else {
+        format!(
+            "Up to date ({}.{}.{}).",
+            current_version.major, current_version.minor, current_version.patch
+        )
+    };
+    Ok(UpdateInfo {
+        current: current_version,
+        latest: Some(latest),
+        update_available,
+        url,
+        message,
+    })
 }
 
 fn csv_cell(value: impl AsRef<str>) -> String {

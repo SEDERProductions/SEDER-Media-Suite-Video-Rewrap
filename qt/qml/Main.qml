@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import QtQuick.Window
 
@@ -12,7 +13,7 @@ ApplicationWindow {
     maximumWidth: 1920
     maximumHeight: 1280
     visible: true
-    title: "SEDER Media Suite Video Rewrap"
+    title: qsTr("SEDER Media Suite Video Rewrap")
 
 
     readonly property bool compactLayout: width < 1240
@@ -99,7 +100,7 @@ ApplicationWindow {
         id: statusPill
         property string text: ""
         property color tone: root.faint
-        property string stateIcon: "\u2022"
+        property string stateIcon: "•"
         implicitHeight: 24
         implicitWidth: label.implicitWidth + 20
         radius: 12
@@ -126,6 +127,8 @@ ApplicationWindow {
         font.family: root.uiFontFamily
         palette.buttonText: primary ? "white" : (commandButton.enabled ? root.ink : root.muted)
         opacity: commandButton.enabled ? 1.0 : 0.62
+        Accessible.role: Accessible.Button
+        Accessible.name: text
         background: Rectangle {
             radius: 5
             color: commandButton.enabled
@@ -176,9 +179,284 @@ ApplicationWindow {
         }
     }
 
+    // True while a text input owns focus. Single-letter and bare-Delete
+    // shortcuts must defer to typing — without this guard, typing into
+    // Notes would delete the selected segment.
+    function isTextInputFocused() {
+        var item = root.activeFocusItem
+        if (!item) return false
+        var name = item.toString()
+        return name.indexOf("QQuickTextField") >= 0
+            || name.indexOf("QQuickTextInput") >= 0
+            || name.indexOf("QQuickTextEdit") >= 0
+            || name.indexOf("QQuickTextArea") >= 0
+    }
+
+    // ---- Global keyboard shortcuts ----
+    Shortcut { sequence: StandardKey.Open;          onActivated: app.openSource() }
+    Shortcut { sequence: "Ctrl+Shift+O";            onActivated: app.loadProject() }
+    Shortcut { sequence: StandardKey.Save;          onActivated: app.saveProject() }
+    Shortcut { sequence: "Ctrl+E";                  onActivated: app.startExport() }
+    Shortcut { sequence: StandardKey.Undo;          onActivated: app.undo() }
+    Shortcut { sequence: StandardKey.Redo;          onActivated: app.redo() }
+    Shortcut { sequence: "Ctrl+Shift+Z";            onActivated: app.redo() }
+    Shortcut {
+        sequence: StandardKey.Delete
+        enabled: !root.isTextInputFocused()
+        onActivated: if (app.selectedRow >= 0) app.removeSegment(app.selectedRow)
+    }
+    Shortcut {
+        sequence: "Space"
+        enabled: !root.isTextInputFocused()
+        onActivated: {
+            if (app.selectedRow < 0) return
+            var idx = segmentModel.index(app.selectedRow, 0)
+            // EnabledRole = Qt::UserRole + 1
+            var currentlyEnabled = segmentModel.data(idx, Qt.UserRole + 1)
+            app.toggleSegment(app.selectedRow, !currentlyEnabled)
+        }
+    }
+    Shortcut {
+        sequence: StandardKey.MoveToNextLine
+        enabled: !root.isTextInputFocused()
+        onActivated: app.selectSegment(Math.min(segmentModel.rowCount() - 1, app.selectedRow + 1))
+    }
+    Shortcut {
+        sequence: StandardKey.MoveToPreviousLine
+        enabled: !root.isTextInputFocused()
+        onActivated: app.selectSegment(Math.max(0, app.selectedRow - 1))
+    }
+    Shortcut {
+        sequence: "I"
+        enabled: !root.isTextInputFocused()
+        onActivated: app.setIn()
+    }
+    Shortcut {
+        sequence: "O"
+        enabled: !root.isTextInputFocused()
+        onActivated: app.setOut()
+    }
+    Shortcut {
+        sequence: ","
+        enabled: !root.isTextInputFocused()
+        onActivated: app.previousKeyframe()
+    }
+    Shortcut {
+        sequence: "."
+        enabled: !root.isTextInputFocused()
+        onActivated: app.nextKeyframe()
+    }
+
+    // ---- Dialogs ----
+    Dialog {
+        id: aboutDialog
+        title: qsTr("About SEDER Video Rewrap")
+        modal: true
+        anchors.centerIn: parent
+        standardButtons: Dialog.Close
+        contentItem: ColumnLayout {
+            spacing: 10
+            Label {
+                text: qsTr("SEDER Media Suite Video Rewrap")
+                font.bold: true
+                font.pixelSize: 18
+                color: ink
+            }
+            Label { text: qsTr("Version %1").arg(app.appVersion); color: muted }
+            Label {
+                text: qsTr("Local-first Qt/Rust desktop tool for keyframe-aligned\nFFmpeg stream-copy exports.")
+                color: muted
+            }
+            Label {
+                text: qsTr("Includes FFmpeg as an external dependency (LGPL).\nLicensed under GPL-3.0-only.")
+                color: faint
+                font.pixelSize: 11
+            }
+            CheckBox {
+                id: updateOptIn
+                text: qsTr("Check for updates on launch")
+                checked: app.updateChecker.checkOnLaunch
+                onToggled: app.updateChecker.checkOnLaunch = checked
+            }
+            RowLayout {
+                CommandButton { text: qsTr("Check Now"); onClicked: app.updateChecker.checkNow() }
+                Label { text: app.updateChecker.lastMessage; color: faint; Layout.fillWidth: true; elide: Text.ElideRight }
+            }
+        }
+    }
+
+    Dialog {
+        id: settingsDialog
+        title: qsTr("FFmpeg Path")
+        modal: true
+        anchors.centerIn: parent
+        standardButtons: Dialog.Close
+        contentItem: ColumnLayout {
+            spacing: 8
+            Label {
+                text: qsTr("If FFmpeg is not on PATH, point the app at the folder containing ffmpeg, ffprobe, and ffplay.")
+                color: muted
+                wrapMode: Text.WordWrap
+                Layout.maximumWidth: 420
+            }
+            Label { text: qsTr("Current: %1").arg(app.customFfmpegDir.length ? app.customFfmpegDir : qsTr("(using system PATH)")); color: faint }
+            RowLayout {
+                CommandButton { text: qsTr("Choose folder..."); onClicked: ffmpegFolderDialog.open() }
+                CommandButton { text: qsTr("Use System PATH"); onClicked: app.clearCustomFfmpegDir() }
+            }
+            Label { text: app.ffmpegVersionText; color: app.ffmpegCompatible ? good : warn; wrapMode: Text.WordWrap; Layout.maximumWidth: 420 }
+        }
+    }
+
+    FolderDialog {
+        id: ffmpegFolderDialog
+        title: qsTr("Select FFmpeg folder")
+        onAccepted: app.setCustomFfmpegDir(selectedFolder.toString())
+    }
+
+    Dialog {
+        id: errorDialog
+        title: qsTr("Error Details")
+        modal: true
+        anchors.centerIn: parent
+        standardButtons: Dialog.Close
+        width: Math.min(720, root.width - 80)
+        contentItem: ColumnLayout {
+            spacing: 8
+            Label { text: qsTr("The most recent operation did not complete. Details below — share these with support if you need help."); color: muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 220
+                TextArea {
+                    readOnly: true
+                    wrapMode: TextEdit.Wrap
+                    font.family: monoFontFamily
+                    font.pixelSize: 11
+                    text: app.lastErrorLog
+                }
+            }
+            RowLayout {
+                CommandButton { text: qsTr("Copy Log"); onClicked: app.copyLastErrorLogToClipboard() }
+                Item { Layout.fillWidth: true }
+            }
+        }
+    }
+
+    Connections {
+        target: app
+        function onLastErrorLogChanged() {
+            if (app.lastErrorLog.length > 0) errorDialog.open()
+        }
+    }
+
+    // ---- Drag-and-drop ----
+    DropArea {
+        anchors.fill: parent
+        keys: ["text/uri-list"]
+        onDropped: (drop) => {
+            if (drop.hasUrls) {
+                for (var i = 0; i < drop.urls.length; ++i) {
+                    app.handleDroppedFile(drop.urls[i].toString())
+                }
+                drop.acceptProposedAction()
+            }
+        }
+    }
+
+    // ---- File menu (recent files) ----
+    menuBar: MenuBar {
+        Menu {
+            title: qsTr("&File")
+            MenuItem { text: qsTr("Open Video...");    onTriggered: app.openSource() }
+            MenuItem { text: qsTr("Load Project...");   onTriggered: app.loadProject() }
+            MenuItem { text: qsTr("Save Project...");   onTriggered: app.saveProject() }
+            MenuSeparator {}
+            Menu {
+                title: qsTr("Recent Videos")
+                enabled: app.recentSources.count > 0
+                Repeater {
+                    model: app.recentSources
+                    delegate: MenuItem {
+                        required property string path
+                        required property string display
+                        text: display.length ? display : path
+                        onTriggered: app.openSourcePath(path)
+                    }
+                }
+                MenuSeparator { visible: app.recentSources.count > 0 }
+                MenuItem { text: qsTr("Clear"); enabled: app.recentSources.count > 0; onTriggered: app.recentSources.clear() }
+            }
+            Menu {
+                title: qsTr("Recent Projects")
+                enabled: app.recentProjects.count > 0
+                Repeater {
+                    model: app.recentProjects
+                    delegate: MenuItem {
+                        required property string path
+                        required property string display
+                        text: display.length ? display : path
+                        onTriggered: app.openProjectPath(path)
+                    }
+                }
+                MenuSeparator { visible: app.recentProjects.count > 0 }
+                MenuItem { text: qsTr("Clear"); enabled: app.recentProjects.count > 0; onTriggered: app.recentProjects.clear() }
+            }
+            MenuSeparator {}
+            MenuItem { text: qsTr("Export TXT Report..."); onTriggered: app.exportTxtReport() }
+            MenuItem { text: qsTr("Export CSV Report..."); onTriggered: app.exportCsvReport() }
+            MenuSeparator {}
+            MenuItem { text: qsTr("Quit"); onTriggered: Qt.quit() }
+        }
+        Menu {
+            title: qsTr("&Edit")
+            MenuItem { text: qsTr("Undo"); enabled: app.canUndo; onTriggered: app.undo() }
+            MenuItem { text: qsTr("Redo"); enabled: app.canRedo; onTriggered: app.redo() }
+        }
+        Menu {
+            title: qsTr("&Tools")
+            MenuItem { text: qsTr("Recheck FFmpeg"); onTriggered: app.recheckTools() }
+            MenuItem { text: qsTr("FFmpeg Path..."); onTriggered: settingsDialog.open() }
+            MenuSeparator {}
+            MenuItem { text: qsTr("Check for Updates"); onTriggered: app.updateChecker.checkNow() }
+        }
+        Menu {
+            title: qsTr("&Help")
+            MenuItem { text: qsTr("About"); onTriggered: aboutDialog.open() }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
+
+        // ---- Update banner ----
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: app.updateChecker.updateAvailable ? 38 : 0
+            visible: app.updateChecker.updateAvailable
+            color: warn
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 14
+                anchors.rightMargin: 14
+                spacing: 10
+                Label {
+                    text: qsTr("Update available: %1").arg(app.updateChecker.latestVersion)
+                    color: "white"
+                    font.bold: true
+                    Layout.fillWidth: true
+                }
+                Button {
+                    text: qsTr("Download")
+                    onClicked: app.updateChecker.openUpdateUrl()
+                }
+                Button {
+                    text: qsTr("Dismiss")
+                    flat: true
+                    onClicked: app.updateChecker.dismiss()
+                }
+            }
+        }
 
         Rectangle {
             Layout.fillWidth: true
@@ -195,7 +473,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     spacing: 2
                     Label {
-                        text: "SEDER Media Suite Video Rewrap"
+                        text: qsTr("SEDER Media Suite Video Rewrap")
                         color: ink
                         font.family: root.uiFontFamily
                         font.pixelSize: 30
@@ -203,11 +481,11 @@ ApplicationWindow {
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                     }
-                    MetaLabel { text: "VOL. 04 / KEYFRAME STREAM COPY" }
+                    MetaLabel { text: qsTr("VOL. 04 / KEYFRAME STREAM COPY") }
                 }
                 StatusPill {
-                    text: app.ffmpegReady && app.ffprobeReady ? "READY" : "MISSING"
-                    tone: app.ffmpegReady && app.ffprobeReady ? good : bad
+                    text: app.ffmpegReady && app.ffprobeReady && app.ffmpegCompatible ? qsTr("READY") : qsTr("MISSING")
+                    tone: app.ffmpegReady && app.ffprobeReady && app.ffmpegCompatible ? good : bad
                 }
             }
         }
@@ -264,56 +542,61 @@ ApplicationWindow {
                     y: 14
                     spacing: 14
 
-                    MetaLabel { text: "01 / TOOLS" }
+                    MetaLabel { text: qsTr("01 / TOOLS") }
                     RowLayout {
-                        CommandButton { text: "Recheck FFmpeg"; onClicked: app.recheckTools() }
+                        CommandButton { text: qsTr("Recheck FFmpeg"); onClicked: app.recheckTools() }
                         StatusPill {
-                            text: app.ffmpegReady && app.ffprobeReady ? "READY" : "MISSING"
+                            text: app.ffmpegReady && app.ffprobeReady ? qsTr("READY") : qsTr("MISSING")
                             tone: app.ffmpegReady && app.ffprobeReady ? good : bad
                         }
                     }
+                    PathLabel { text: app.ffmpegVersionText; Layout.fillWidth: true; wrapMode: Text.Wrap }
                     PathLabel { text: app.logText; Layout.fillWidth: true; wrapMode: Text.Wrap }
 
-                    MetaLabel { text: "02 / FILES" }
-                    CommandButton { text: "Open Video"; Layout.fillWidth: true; onClicked: app.openSource() }
-                    PathLabel { text: app.sourcePath.length ? app.sourcePath : "No source selected"; Layout.fillWidth: true }
-                    CommandButton { text: "Output File"; Layout.fillWidth: true; onClicked: app.chooseOutput() }
-                    PathLabel { text: app.outputPath.length ? app.outputPath : "No output selected"; Layout.fillWidth: true }
+                    MetaLabel { text: qsTr("02 / FILES") }
+                    CommandButton { text: qsTr("Open Video"); Layout.fillWidth: true; onClicked: app.openSource() }
+                    PathLabel { text: app.sourcePath.length ? app.sourcePath : qsTr("No source selected"); Layout.fillWidth: true }
+                    CommandButton { text: qsTr("Output File"); Layout.fillWidth: true; onClicked: app.chooseOutput() }
+                    PathLabel { text: app.outputPath.length ? app.outputPath : qsTr("No output selected"); Layout.fillWidth: true }
 
-                    MetaLabel { text: "03 / PROJECT" }
+                    MetaLabel { text: qsTr("03 / PROJECT") }
                     RowLayout {
-                        CommandButton { text: "Save"; Layout.fillWidth: true; onClicked: app.saveProject() }
-                        CommandButton { text: "Load"; Layout.fillWidth: true; onClicked: app.loadProject() }
+                        CommandButton { text: qsTr("Save"); Layout.fillWidth: true; onClicked: app.saveProject() }
+                        CommandButton { text: qsTr("Load"); Layout.fillWidth: true; onClicked: app.loadProject() }
                     }
                     RowLayout {
-                        CommandButton { text: "TXT Report"; Layout.fillWidth: true; onClicked: app.exportTxtReport() }
-                        CommandButton { text: "CSV Report"; Layout.fillWidth: true; onClicked: app.exportCsvReport() }
+                        CommandButton { text: qsTr("Undo"); enabled: app.canUndo; Layout.fillWidth: true; onClicked: app.undo() }
+                        CommandButton { text: qsTr("Redo"); enabled: app.canRedo; Layout.fillWidth: true; onClicked: app.redo() }
+                    }
+                    RowLayout {
+                        CommandButton { text: qsTr("TXT Report"); Layout.fillWidth: true; onClicked: app.exportTxtReport() }
+                        CommandButton { text: qsTr("CSV Report"); Layout.fillWidth: true; onClicked: app.exportCsvReport() }
                     }
 
-                    MetaLabel { text: "04 / EXPORT" }
+                    MetaLabel { text: qsTr("04 / EXPORT") }
                     RowLayout {
                         Layout.fillWidth: true
-                        CommandButton { text: "Concat Single"; Layout.fillWidth: true; onClicked: app.setExportMode("concat_single") }
-                        CommandButton { text: "Separate Files"; Layout.fillWidth: true; onClicked: app.setExportMode("separate_files") }
+                        CommandButton { text: qsTr("Concat Single"); Layout.fillWidth: true; onClicked: app.setExportMode("concat_single") }
+                        CommandButton { text: qsTr("Separate Files"); Layout.fillWidth: true; onClicked: app.setExportMode("separate_files") }
                     }
-                    PathLabel { text: "Mode: " + app.exportMode; Layout.fillWidth: true }
+                    PathLabel { text: qsTr("Mode: %1").arg(app.exportMode); Layout.fillWidth: true }
                     CommandButton {
-                        text: app.busy ? "Exporting..." : "Start Export"
+                        text: app.busy ? qsTr("Exporting...") : qsTr("Start Export")
                         primary: true
                         enabled: !app.busy
                         Layout.fillWidth: true
                         onClicked: app.startExport()
                     }
                     CommandButton {
-                        text: "Replace File"
+                        text: qsTr("Replace File")
                         enabled: !app.busy && app.sourcePath.length > 0
                         Layout.fillWidth: true
                         onClicked: app.replaceFile()
                         ToolTip.visible: hovered
-                        ToolTip.text: "Renames source to _PREWRAP and exports new file in its place."
+                        ToolTip.text: qsTr("Renames source to _PREWRAP and exports new file in its place.")
                     }
                     CommandButton {
-                        text: "Cancel Export"
+                        text: qsTr("Cancel Export")
                         enabled: app.busy
                         Layout.fillWidth: true
                         onClicked: app.cancelExport()
@@ -325,11 +608,11 @@ ApplicationWindow {
                         Layout.fillWidth: true
                     }
 
-                    MetaLabel { text: "05 / THEME" }
+                    MetaLabel { text: qsTr("05 / THEME") }
                     RowLayout {
-                        CommandButton { text: "System"; Layout.fillWidth: true; onClicked: app.setTheme("system") }
-                        CommandButton { text: "Light"; Layout.fillWidth: true; onClicked: app.setTheme("light") }
-                        CommandButton { text: "Dark"; Layout.fillWidth: true; onClicked: app.setTheme("dark") }
+                        CommandButton { text: qsTr("System"); Layout.fillWidth: true; onClicked: app.setTheme("system") }
+                        CommandButton { text: qsTr("Light"); Layout.fillWidth: true; onClicked: app.setTheme("light") }
+                        CommandButton { text: qsTr("Dark"); Layout.fillWidth: true; onClicked: app.setTheme("dark") }
                     }
                 }
             }
@@ -356,15 +639,15 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.margins: 12
                             spacing: 10
-                            MetaLabel { text: "MEDIA METADATA" }
+                            MetaLabel { text: qsTr("MEDIA METADATA") }
                             GridLayout {
                                 Layout.fillWidth: true
                                 columns: 4
                                 columnSpacing: 10
-                                Metric { label: "Duration"; value: app.durationText; Layout.fillWidth: true }
-                                Metric { label: "Resolution"; value: app.resolutionText; Layout.fillWidth: true }
-                                Metric { label: "Codec"; value: app.codecText; Layout.fillWidth: true }
-                                Metric { label: "Size"; value: app.sizeText; Layout.fillWidth: true }
+                                Metric { label: qsTr("Duration"); value: app.durationText; Layout.fillWidth: true }
+                                Metric { label: qsTr("Resolution"); value: app.resolutionText; Layout.fillWidth: true }
+                                Metric { label: qsTr("Codec"); value: app.codecText; Layout.fillWidth: true }
+                                Metric { label: qsTr("Size"); value: app.sizeText; Layout.fillWidth: true }
                             }
                             PathLabel { text: app.mediaSummary; Layout.fillWidth: true }
                         }
@@ -377,50 +660,53 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.margins: 12
                             spacing: 10
-                            MetaLabel { text: "KEYFRAME NAVIGATION AND SEGMENT CREATION" }
+                            MetaLabel { text: qsTr("KEYFRAME NAVIGATION AND SEGMENT CREATION") }
                             GridLayout {
                                 Layout.fillWidth: true
                                 columns: 3
                                 columnSpacing: 10
-                                Metric { label: "Keyframes"; value: app.keyframeCount.toString(); Layout.fillWidth: true }
-                                Metric { label: "Current"; value: app.currentKeyframeText; tone: good; Layout.fillWidth: true }
-                                Metric { label: "Selected"; value: app.totalDurationText; Layout.fillWidth: true }
+                                Metric { label: qsTr("Keyframes"); value: app.keyframeCount.toString(); Layout.fillWidth: true }
+                                Metric { label: qsTr("Current"); value: app.currentKeyframeText; tone: good; Layout.fillWidth: true }
+                                Metric { label: qsTr("Selected"); value: app.totalDurationText; Layout.fillWidth: true }
                             }
                             RowLayout {
                                 Layout.fillWidth: true
-                                CommandButton { text: "Go to Previous Keyframe"; onClicked: app.previousKeyframe(); ToolTip.visible: hovered; ToolTip.text: "Move playhead to the previous detected keyframe." }
-                                CommandButton { text: "Go to Next Keyframe"; onClicked: app.nextKeyframe(); ToolTip.visible: hovered; ToolTip.text: "Move playhead to the next detected keyframe." }
-                                CommandButton { text: "Preview Selected Keyframe"; onClicked: app.previewCurrent(); ToolTip.visible: hovered; ToolTip.text: "Play a short preview at the selected keyframe." }
-                                MetaLabel { text: "JUMP TO TIMECODE"; Layout.leftMargin: 8 }
+                                CommandButton { text: qsTr("Go to Previous Keyframe"); onClicked: app.previousKeyframe(); ToolTip.visible: hovered; ToolTip.text: qsTr("Move playhead to the previous detected keyframe.") }
+                                CommandButton { text: qsTr("Go to Next Keyframe"); onClicked: app.nextKeyframe(); ToolTip.visible: hovered; ToolTip.text: qsTr("Move playhead to the next detected keyframe.") }
+                                CommandButton { text: qsTr("Preview Selected Keyframe"); onClicked: app.previewCurrent(); ToolTip.visible: hovered; ToolTip.text: qsTr("Play a short preview at the selected keyframe.") }
+                                MetaLabel { text: qsTr("JUMP TO TIMECODE"); Layout.leftMargin: 8 }
                                 Field {
                                     id: jumpTime
                                     text: "00:00:00.000"
                                     Layout.preferredWidth: 150
+                                    Accessible.name: qsTr("Jump to timecode")
                                 }
-                                CommandButton { text: "Jump to Timecode"; onClicked: app.jumpToTimecode(jumpTime.text); ToolTip.visible: hovered; ToolTip.text: "Use HH:MM:SS.mmm format to move to an exact time." }
+                                CommandButton { text: qsTr("Jump to Timecode"); onClicked: app.jumpToTimecode(jumpTime.text); ToolTip.visible: hovered; ToolTip.text: qsTr("Use HH:MM:SS.mmm format to move to an exact time.") }
                             }
-                            MetaLabel { text: "Tip: Set IN and OUT markers before creating a segment." }
+                            MetaLabel { text: qsTr("Tip: Set IN and OUT markers before creating a segment. Shortcuts: I, O, comma/period to step keyframes.") }
                             RowLayout {
                                 Layout.fillWidth: true
-                                CommandButton { text: "Set In Marker"; onClicked: app.setIn(); ToolTip.visible: hovered; ToolTip.text: "Set the start boundary for the segment you are creating." }
-                                StatusPill { text: "IN " + app.pendingInText }
-                                CommandButton { text: "Set Out Marker"; onClicked: app.setOut(); ToolTip.visible: hovered; ToolTip.text: "Set the end boundary for the segment you are creating." }
-                                StatusPill { text: "OUT " + app.pendingOutText }
+                                CommandButton { text: qsTr("Set In Marker"); onClicked: app.setIn(); ToolTip.visible: hovered; ToolTip.text: qsTr("Set the start boundary for the segment you are creating.") }
+                                StatusPill { text: qsTr("IN %1").arg(app.pendingInText) }
+                                CommandButton { text: qsTr("Set Out Marker"); onClicked: app.setOut(); ToolTip.visible: hovered; ToolTip.text: qsTr("Set the end boundary for the segment you are creating.") }
+                                StatusPill { text: qsTr("OUT %1").arg(app.pendingOutText) }
                             }
                             RowLayout {
                                 Layout.fillWidth: true
                                 Field {
                                     id: segmentName
-                                    placeholderText: "Segment name"
+                                    placeholderText: qsTr("Segment name")
                                     Layout.preferredWidth: 180
+                                    Accessible.name: qsTr("Segment name")
                                 }
                                 Field {
                                     id: segmentNotes
-                                    placeholderText: "Notes"
+                                    placeholderText: qsTr("Notes")
                                     Layout.fillWidth: true
+                                    Accessible.name: qsTr("Segment notes")
                                 }
                                 CommandButton {
-                                    text: "Create Segment"
+                                    text: qsTr("Create Segment")
                                     primary: true
                                     onClicked: {
                                         app.addSegment(segmentName.text, segmentNotes.text)
@@ -441,14 +727,14 @@ ApplicationWindow {
                             spacing: 10
                             RowLayout {
                                 Layout.fillWidth: true
-                                MetaLabel { text: "SEGMENT LIST"; Layout.fillWidth: true }
-                                StatusPill { text: "TOTAL " + app.totalDurationText; tone: good }
+                                MetaLabel { text: qsTr("SEGMENT LIST"); Layout.fillWidth: true }
+                                StatusPill { text: qsTr("TOTAL %1").arg(app.totalDurationText); tone: good }
                             }
                             Row {
                                 Layout.fillWidth: true
                                 height: 28
                                 Repeater {
-                                    model: ["Enabled", "Segment Name", "In Marker", "Out Marker", "Duration", "Notes"]
+                                    model: [qsTr("Enabled"), qsTr("Segment Name"), qsTr("In Marker"), qsTr("Out Marker"), qsTr("Duration"), qsTr("Notes")]
                                     Rectangle {
                                         width: root.tableColumnWidth(index)
                                         implicitHeight: 28
@@ -506,12 +792,12 @@ ApplicationWindow {
                             }
                             RowLayout {
                                 Layout.fillWidth: true
-                                CommandButton { text: "Set Enabled"; enabled: app.selectedRow >= 0; onClicked: app.toggleSegment(app.selectedRow, true) }
-                                CommandButton { text: "Set Disabled"; enabled: app.selectedRow >= 0; onClicked: app.toggleSegment(app.selectedRow, false) }
-                                CommandButton { text: "Move Up"; enabled: app.selectedRow > 0; onClicked: app.moveSegmentUp(app.selectedRow) }
-                                CommandButton { text: "Move Down"; enabled: app.selectedRow >= 0 && app.selectedRow + 1 < segmentModel.rowCount(); onClicked: app.moveSegmentDown(app.selectedRow) }
-                                CommandButton { text: "Duplicate"; enabled: app.selectedRow >= 0; onClicked: app.duplicateSegment(app.selectedRow) }
-                                CommandButton { text: "Delete"; enabled: app.selectedRow >= 0; onClicked: app.removeSegment(app.selectedRow) }
+                                CommandButton { text: qsTr("Set Enabled"); enabled: app.selectedRow >= 0; onClicked: app.toggleSegment(app.selectedRow, true) }
+                                CommandButton { text: qsTr("Set Disabled"); enabled: app.selectedRow >= 0; onClicked: app.toggleSegment(app.selectedRow, false) }
+                                CommandButton { text: qsTr("Move Up"); enabled: app.selectedRow > 0; onClicked: app.moveSegmentUp(app.selectedRow) }
+                                CommandButton { text: qsTr("Move Down"); enabled: app.selectedRow >= 0 && app.selectedRow + 1 < segmentModel.rowCount(); onClicked: app.moveSegmentDown(app.selectedRow) }
+                                CommandButton { text: qsTr("Duplicate"); enabled: app.selectedRow >= 0; onClicked: app.duplicateSegment(app.selectedRow) }
+                                CommandButton { text: qsTr("Delete"); enabled: app.selectedRow >= 0; onClicked: app.removeSegment(app.selectedRow) }
                                 Item { Layout.fillWidth: true }
                             }
                         }
@@ -531,7 +817,7 @@ ApplicationWindow {
                 anchors.rightMargin: 16
                 spacing: 10
                 StatusPill {
-                    text: app.busy ? "WORKING" : "LOG"
+                    text: app.busy ? qsTr("WORKING") : qsTr("LOG")
                     tone: app.busy ? warn : faint
                 }
                 PathLabel {

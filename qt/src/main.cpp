@@ -1,11 +1,13 @@
 #include "AppController.h"
 #include "SegmentTableModel.h"
+#include "seder_version.h"
 
 #include <QApplication>
 #include <QCoreApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <QStringList>
 
 int main(int argc, char *argv[])
 {
@@ -13,7 +15,17 @@ int main(int argc, char *argv[])
     QApplication::setOrganizationName(QStringLiteral("Seder Productions"));
     QApplication::setOrganizationDomain(QStringLiteral("sederproductions.com"));
     QApplication::setApplicationName(QStringLiteral("SEDER Media Suite Video Rewrap"));
+    QApplication::setApplicationVersion(QStringLiteral(SEDER_APP_VERSION));
     QQuickStyle::setStyle(QStringLiteral("Fusion"));
+
+    // CLI: --no-update-check disables the launch-time update probe for THIS
+    // run only (without touching the persisted preference). The flag also
+    // works for CI smoke runs and offline builds. AppController reads the
+    // env var below in its constructor.
+    const QStringList args = QApplication::arguments();
+    if (args.contains(QStringLiteral("--no-update-check"))) {
+        qputenv("SEDER_DISABLE_UPDATE_CHECK", "1");
+    }
 
     SegmentTableModel segmentModel;
     AppController controller(&segmentModel);
