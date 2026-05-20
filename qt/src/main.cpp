@@ -1,5 +1,6 @@
 #include "AppController.h"
 #include "SegmentTableModel.h"
+#include "seder_version.h"
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -7,10 +8,6 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QStringList>
-
-#ifndef SEDER_APP_VERSION
-#define SEDER_APP_VERSION "0.0.0"
-#endif
 
 int main(int argc, char *argv[])
 {

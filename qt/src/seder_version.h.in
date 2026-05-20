@@ -1,0 +1,6 @@
+#pragma once
+
+// Generated from seder_version.h.in by CMake at configure time.
+// Edit the CMake PROJECT_VERSION, not this file.
+
+#define SEDER_APP_VERSION "@PROJECT_VERSION@"

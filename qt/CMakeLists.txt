@@ -9,6 +9,15 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 Widgets Test)
 
+# Stamp PROJECT_VERSION into a header so every translation unit sees the same
+# string. configure_file is bulletproof across all CMake generators (Ninja,
+# MSBuild, Xcode), unlike target_compile_definitions with embedded quotes.
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/seder_version.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/seder_version.h
+    @ONLY
+)
+
 set(RUST_TARGET_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../target)
 set(RUST_CORE_LIBRARY ${RUST_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}seder_video_rewrap${CMAKE_STATIC_LIBRARY_SUFFIX})
 
@@ -59,10 +68,7 @@ add_dependencies(seder-video-rewrap seder_video_rewrap_core)
 target_include_directories(seder-video-rewrap PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-
-target_compile_definitions(seder-video-rewrap PRIVATE
-    SEDER_APP_VERSION="${PROJECT_VERSION}"
+    ${CMAKE_CURRENT_BINARY_DIR}
 )
 
 target_link_libraries(seder-video-rewrap PRIVATE
@@ -166,10 +172,7 @@ add_dependencies(app-controller-tests seder_video_rewrap_core)
 target_include_directories(app-controller-tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-
-target_compile_definitions(app-controller-tests PRIVATE
-    SEDER_APP_VERSION="${PROJECT_VERSION}"
+    ${CMAKE_CURRENT_BINARY_DIR}
 )
 
 target_link_libraries(app-controller-tests PRIVATE
