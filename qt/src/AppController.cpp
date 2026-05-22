@@ -416,13 +416,20 @@ void AppController::replaceFile()
         return;
     }
 
+    const QString originalSource = m_sourcePath;
+
+    // Validate preflight before renaming source, so we don't lose the file if validation fails
+    const QJsonObject preflight = RustBridge::rewrapPreflight(m_metadataJson, originalSource, m_segments->toJsonArray(), keyframesJson());
+    if (!preflight.value("ok").toBool()) {
+        setLogText(tr("Cannot replace: %1").arg(preflight.value("error").toString()));
+        return;
+    }
+
     QFile file(m_sourcePath);
     if (!file.rename(backupPath)) {
         setLogText(tr("Unable to rename source to backup: %1").arg(file.errorString()));
         return;
     }
-
-    const QString originalSource = m_sourcePath;
     m_sourcePath = backupPath;
     m_outputPath = originalSource;
     emit sourcePathChanged();

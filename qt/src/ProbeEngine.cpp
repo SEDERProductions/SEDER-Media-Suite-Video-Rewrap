@@ -67,15 +67,18 @@ void ProbeEngine::probeSource(const QString &path)
         return;
     }
 
+    m_currentProbePath = path; // mark this as the active probe
     QPointer<ProbeEngine> self(this);
-    QThread *worker = QThread::create([self, path] {
+    const QString probePath = path; // capture for validation
+    QThread *worker = QThread::create([self, path, probePath] {
         const QJsonObject metadataReply = RustBridge::ffprobeMetadataCommand(path);
         const QJsonObject keyframeReply = RustBridge::ffprobeKeyframeCommand(path);
         if (!metadataReply.value("ok").toBool() || !keyframeReply.value("ok").toBool()) {
             const QString error = metadataReply.value("error").toString(keyframeReply.value("error").toString());
             if (self) {
-                QMetaObject::invokeMethod(self, [self, error] {
+                QMetaObject::invokeMethod(self, [self, probePath, error] {
                     if (!self) return;
+                    if (self->m_currentProbePath != probePath) return; // ignore stale probe
                     emit self->probeComplete(false, QJsonObject(), QJsonArray(), error);
                 }, Qt::QueuedConnection);
             }
@@ -95,8 +98,9 @@ void ProbeEngine::probeSource(const QString &path)
         if (!metadata.ok || !keyframes.ok) {
             const QString error = !metadata.ok ? metadata.stderrText : keyframes.stderrText;
             if (self) {
-                QMetaObject::invokeMethod(self, [self, error] {
+                QMetaObject::invokeMethod(self, [self, probePath, error] {
                     if (!self) return;
+                    if (self->m_currentProbePath != probePath) return; // ignore stale probe
                     emit self->probeComplete(false, QJsonObject(), QJsonArray(), error);
                 }, Qt::QueuedConnection);
             }
@@ -106,8 +110,9 @@ void ProbeEngine::probeSource(const QString &path)
         const quint64 size = QFileInfo(path).size();
         const QJsonObject parsed = RustBridge::parseProbeResult(path, size, metadata.stdoutText, keyframes.stdoutText);
         if (self) {
-            QMetaObject::invokeMethod(self, [self, parsed] {
+            QMetaObject::invokeMethod(self, [self, probePath, parsed] {
                 if (!self) return;
+                if (self->m_currentProbePath != probePath) return; // ignore stale probe
                 if (!parsed.value("ok").toBool()) {
                     emit self->probeComplete(false, QJsonObject(), QJsonArray(), parsed.value("error").toString());
                     return;
