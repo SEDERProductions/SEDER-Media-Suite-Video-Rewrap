@@ -146,6 +146,9 @@ pub fn parse_timecode_to_ms(value: &str) -> Result<i64> {
     }
     if !trimmed.contains(':') {
         let seconds = trimmed.parse::<f64>().context("Invalid seconds value")?;
+        if seconds < 0.0 {
+            anyhow::bail!("Seconds value must be >= 0");
+        }
         return Ok((seconds * 1000.0).round() as i64);
     }
     let parts = trimmed.split(':').collect::<Vec<_>>();
@@ -155,6 +158,17 @@ pub fn parse_timecode_to_ms(value: &str) -> Result<i64> {
     let hours = parts[0].parse::<i64>().context("Invalid hours")?;
     let minutes = parts[1].parse::<i64>().context("Invalid minutes")?;
     let seconds = parts[2].parse::<f64>().context("Invalid seconds")?;
+
+    if hours < 0 {
+        anyhow::bail!("Hours must be >= 0");
+    }
+    if !(0..60).contains(&minutes) {
+        anyhow::bail!("Minutes must be in range 0..60");
+    }
+    if !(0.0..60.0).contains(&seconds) {
+        anyhow::bail!("Seconds must be in range 0.0..60.0");
+    }
+
     Ok((((hours * 60 + minutes) * 60) * 1000) + (seconds * 1000.0).round() as i64)
 }
 

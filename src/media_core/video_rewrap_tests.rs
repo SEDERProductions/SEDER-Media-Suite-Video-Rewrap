@@ -27,7 +27,23 @@ fn parses_ffprobe_metadata() {
 fn parses_and_formats_timecode() {
     assert_eq!(parse_timecode_to_ms("00:02:10.250").unwrap(), 130_250);
     assert_eq!(parse_timecode_to_ms("3.5").unwrap(), 3_500);
+    assert_eq!(parse_timecode_to_ms("00:59:59.999").unwrap(), 3_599_999);
     assert_eq!(format_ms(130_250), "00:02:10.250");
+}
+
+#[test]
+fn rejects_out_of_range_timecode_fields() {
+    assert!(parse_timecode_to_ms("00:60:00.000").is_err());
+    assert!(parse_timecode_to_ms("00:00:60.000").is_err());
+}
+
+#[test]
+fn rejects_negative_time_values() {
+    assert!(parse_timecode_to_ms("-1").is_err());
+    assert!(parse_timecode_to_ms("-3.5").is_err());
+    assert!(parse_timecode_to_ms("-01:00:01.000").is_err());
+    assert!(parse_timecode_to_ms("00:-01:00.000").is_err());
+    assert!(parse_timecode_to_ms("00:00:-01.000").is_err());
 }
 
 #[test]
