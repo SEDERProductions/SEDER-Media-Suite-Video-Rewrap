@@ -90,6 +90,18 @@ fn container_family_for_extension(ext: &str) -> Option<&'static str> {
     }
 }
 
+
+pub fn validated_container_extension(output: &Path) -> Result<String> {
+    let ext = container_extension_from_path(output);
+    container_family_for_extension(&ext).with_context(|| {
+        format!(
+            "Output container '.{}' is not supported for stream-copy rewrap. Use .mov, .mp4/.m4v, or .mkv.",
+            ext
+        )
+    })?;
+    Ok(ext)
+}
+
 fn metadata_has_family(container: Option<&str>, family: &str) -> bool {
     let Some(container) = container else {
         return false;
@@ -111,10 +123,9 @@ pub fn rewrap_preflight(
         anyhow::bail!("No enabled segments to export. Enable at least one segment.");
     }
 
-    let ext = container_extension_from_path(output);
-    let family = container_family_for_extension(&ext).with_context(|| {
-        format!("Output container '.{}' is not supported for stream-copy rewrap. Use .mov, .mp4/.m4v, or .mkv.", ext)
-    })?;
+    let ext = validated_container_extension(output)?;
+    let family =
+        container_family_for_extension(&ext).expect("validated extension must have a container family");
 
     if !metadata_has_family(metadata.container.as_deref(), family) {
         anyhow::bail!(

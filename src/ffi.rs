@@ -2,7 +2,7 @@ use crate::media_core::video_rewrap::{
     ffmpeg_concat_command, ffmpeg_segment_command, ffplay_preview_command,
     ffprobe_keyframe_command, ffprobe_metadata_command, format_ms, nearest_keyframe,
     parse_ffprobe_keyframes, parse_ffprobe_metadata, parse_timecode_to_ms, rewrap_preflight,
-    rewrap_report_csv, rewrap_report_txt, temp_segment_path, validate_segments, RewrapProject,
+    rewrap_report_csv, rewrap_report_txt, temp_segment_path, validate_segments, validated_container_extension, RewrapProject,
     RewrapSegment, VideoMetadata, CURRENT_PROJECT_VERSION,
 };
 use anyhow::{Context, Result};
@@ -44,13 +44,6 @@ fn concat_list(paths: &[PathBuf]) -> String {
         .collect::<String>()
 }
 
-fn output_extension(path: &Path) -> String {
-    path.extension()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .unwrap_or("mov")
-        .to_string()
-}
 
 fn response(result: Result<Value>) -> *mut c_char {
     let value = match result {
@@ -269,7 +262,7 @@ pub extern "C" fn svr_export_plan(
         let source = Path::new(&source);
         let output = Path::new(&output);
         let temp_root = PathBuf::from(temp_root);
-        let extension = output_extension(output);
+        let extension = validated_container_extension(output)?;
         let mut segment_paths = Vec::with_capacity(enabled.len());
         let mut planned_segments = Vec::with_capacity(enabled.len());
         for (index, segment) in enabled.iter().enumerate() {
@@ -485,10 +478,10 @@ mod tests {
             segments.as_ptr(),
             keyframes.as_ptr(),
         ));
-        assert_eq!(parsed_mxf["ok"], true);
-        assert!(parsed_mxf["listText"]
+        assert_eq!(parsed_mxf["ok"], false);
+        assert!(parsed_mxf["error"]
             .as_str()
             .unwrap()
-            .contains("segment-0001.mxf"));
+            .contains("not supported for stream-copy rewrap"));
     }
 }
