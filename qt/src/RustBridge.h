@@ -31,6 +31,7 @@ public:
                                        const QJsonArray &keyframes);
     static QJsonObject exportPlan(
         const QString &source,
+        const QJsonObject &metadata,
         const QString &output,
         const QString &tempRoot,
         const QJsonArray &segments,
@@ -57,7 +58,7 @@ private:
     using FfiCallQStr1I64 = char *(*)(const char *, qint64);
     using FfiCallQStr1U64QStr2 = char *(*)(const char *, quint64, const char *, const char *);
     using FfiCallJson2 = char *(*)(const char *, const char *);
-    using FfiCallQStr3Json2 = char *(*)(const char *, const char *, const char *, const char *, const char *);
+    using FfiCallQStr4Json2 = char *(*)(const char *, const char *, const char *, const char *, const char *, const char *);
 
     static QByteArray jsonBytes(const QJsonArray &array);
     static QJsonObject decode(char *raw);
@@ -76,11 +77,12 @@ private:
         const QString &second,
         const QString &third);
     static QJsonObject invokeJsonJson(FfiCallJson2 call, const QJsonArray &first, const QJsonArray &second);
-    static QJsonObject invokeQStrQStrQStrJsonJson(
-        FfiCallQStr3Json2 call,
+    static QJsonObject invokeQStrQStrQStrQStrJsonJson(
+        FfiCallQStr4Json2 call,
         const QString &first,
         const QString &second,
         const QString &third,
-        const QJsonArray &fourth,
-        const QJsonArray &fifth);
+        const QString &fourth,
+        const QJsonArray &fifth,
+        const QJsonArray &sixth);
 };

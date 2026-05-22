@@ -258,6 +258,7 @@ void AppController::startExport()
         .arg(QDateTime::currentMSecsSinceEpoch()));
     const QJsonObject plan = RustBridge::exportPlan(
         m_sourcePath,
+        m_metadataJson,
         m_outputPath,
         tempRoot,
         m_segments->toJsonArray(),

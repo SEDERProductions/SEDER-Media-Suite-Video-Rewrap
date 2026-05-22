@@ -21,6 +21,7 @@ char *svr_validate_segments(const char *segments_json, const char *keyframes_jso
 char *svr_rewrap_preflight(const char *metadata_json, const char *output, const char *segments_json, const char *keyframes_json);
 char *svr_export_plan(
     const char *source,
+    const char *metadata_json,
     const char *output,
     const char *temp_root,
     const char *segments_json,

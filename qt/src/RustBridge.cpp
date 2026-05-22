@@ -94,20 +94,22 @@ QJsonObject RustBridge::invokeJsonJson(FfiCallJson2 call, const QJsonArray &firs
     return decode(call(a.constData(), b.constData()));
 }
 
-QJsonObject RustBridge::invokeQStrQStrQStrJsonJson(
-    FfiCallQStr3Json2 call,
+QJsonObject RustBridge::invokeQStrQStrQStrQStrJsonJson(
+    FfiCallQStr4Json2 call,
     const QString &first,
     const QString &second,
     const QString &third,
-    const QJsonArray &fourth,
-    const QJsonArray &fifth)
+    const QString &fourth,
+    const QJsonArray &fifth,
+    const QJsonArray &sixth)
 {
     const QByteArray a = utf8(first);
     const QByteArray b = utf8(second);
     const QByteArray c = utf8(third);
-    const QByteArray d = jsonBytes(fourth);
+    const QByteArray d = utf8(fourth);
     const QByteArray e = jsonBytes(fifth);
-    return decode(call(a.constData(), b.constData(), c.constData(), d.constData(), e.constData()));
+    const QByteArray f = jsonBytes(sixth);
+    return decode(call(a.constData(), b.constData(), c.constData(), d.constData(), e.constData(), f.constData()));
 }
 
 QJsonObject RustBridge::parseTimecode(const QString &value)
@@ -174,14 +176,17 @@ QJsonObject RustBridge::rewrapPreflight(
 
 QJsonObject RustBridge::exportPlan(
     const QString &source,
+    const QJsonObject &metadata,
     const QString &output,
     const QString &tempRoot,
     const QJsonArray &segments,
     const QJsonArray &keyframes)
 {
-    return invokeQStrQStrQStrJsonJson(
+    const QByteArray m = jsonObjectBytes(metadata);
+    return invokeQStrQStrQStrQStrJsonJson(
         svr_export_plan,
         source,
+        QString::fromUtf8(m),
         output,
         tempRoot,
         segments,
