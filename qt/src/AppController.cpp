@@ -267,7 +267,7 @@ void AppController::startExport()
         return;
     }
 
-    m_cancelExport = false;
+    m_cancelExport.store(false, std::memory_order_relaxed);
     setBusy(true);
     setProgress(0.05);
     setLogText("Exporting with FFmpeg stream copy only...");
@@ -276,7 +276,7 @@ void AppController::startExport()
         QDir().mkpath(tempRoot);
         const QJsonArray plannedSegments = plan.value("segments").toArray();
         for (int i = 0; i < plannedSegments.size(); ++i) {
-            if (m_cancelExport) {
+            if (m_cancelExport.load(std::memory_order_relaxed)) {
                 QDir(tempRoot).removeRecursively();
                 QMetaObject::invokeMethod(this, [this] {
                     setBusy(false);
@@ -350,7 +350,7 @@ void AppController::cancelExport()
     if (!m_busy) {
         return;
     }
-    m_cancelExport = true;
+    m_cancelExport.store(true, std::memory_order_relaxed);
     setLogText("Cancelling export...");
 }
 
@@ -793,7 +793,7 @@ AppController::ProcessResult AppController::runCommand(const RustBridge::Command
     while (!process.waitForFinished(100)) {
         stdoutBuf += process.readAllStandardOutput();
         stderrBuf += process.readAllStandardError();
-        if (cancel && *cancel) {
+        if (cancel && cancel->load(std::memory_order_relaxed)) {
             process.kill();
             process.waitForFinished();
             result.stderrText = "Process cancelled.";
