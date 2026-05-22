@@ -276,25 +276,27 @@ void AppController::startExport()
     }
 
     m_cancelExport = false;
+    m_exportCancelToken = std::make_shared<std::atomic_bool>(false);
     setBusy(true);
     setProgress(0.05);
     setLogText("Exporting with FFmpeg stream copy only...");
 
     QPointer<AppController> self(this);
-    QThread *worker = QThread::create([self, tempRoot, plan] {
+    QThread *worker = QThread::create([self, tempRoot, plan, cancelToken = m_exportCancelToken] {
         if (!self) {
             return;
         }
         QDir().mkpath(tempRoot);
         const QJsonArray plannedSegments = plan.value("segments").toArray();
         for (int i = 0; i < plannedSegments.size(); ++i) {
-            if (self->m_cancelExport) {
+            if (cancelToken->load()) {
                 QDir(tempRoot).removeRecursively();
                 QMetaObject::invokeMethod(self, [self] {
                     if (!self) {
                         return;
                     }
                     self->setBusy(false);
+                    self->m_exportCancelToken.reset();
                     self->setProgress(0.0);
                     self->setLogText("Export cancelled.");
                 }, Qt::QueuedConnection);
@@ -312,7 +314,7 @@ void AppController::startExport()
                     .arg(i + 1)
                     .arg(plannedSegments.size()));
             }, Qt::QueuedConnection);
-            const ProcessResult result = runCommand(command, &self->m_cancelExport);
+            const ProcessResult result = runCommand(command, cancelToken.get());
             if (!result.ok) {
                 QDir(tempRoot).removeRecursively();
                 QMetaObject::invokeMethod(self, [self, path, result] {
@@ -320,6 +322,7 @@ void AppController::startExport()
                         return;
                     }
                     self->setBusy(false);
+                    self->m_exportCancelToken.reset();
                     self->setProgress(0.0);
                     self->setLogText(QStringLiteral("Segment export failed for %1\n%2")
                         .arg(self->displayPath(path), result.stderrText));
@@ -337,6 +340,7 @@ void AppController::startExport()
                     return;
                 }
                 self->setBusy(false);
+                self->m_exportCancelToken.reset();
                 self->setProgress(0.0);
                 self->setLogText(QStringLiteral("Unable to write concat list: %1").arg(error));
             }, Qt::QueuedConnection);
@@ -353,7 +357,7 @@ void AppController::startExport()
             self->setLogText("Concatenating enabled segments...");
         }, Qt::QueuedConnection);
         const RustBridge::Command concat = RustBridge::commandFromJson(plan.value("concatCommand").toObject());
-        const ProcessResult result = runCommand(concat, &self->m_cancelExport);
+        const ProcessResult result = runCommand(concat, cancelToken.get());
         QDir(tempRoot).removeRecursively();
 
         QMetaObject::invokeMethod(self, [self, result] {
@@ -361,6 +365,7 @@ void AppController::startExport()
                 return;
             }
             self->setBusy(false);
+            self->m_exportCancelToken.reset();
             if (result.ok) {
                 self->setProgress(1.0);
                 self->setLogText(QStringLiteral("Export complete: %1").arg(self->displayPath(self->m_outputPath)));
@@ -381,6 +386,9 @@ void AppController::cancelExport()
         return;
     }
     m_cancelExport = true;
+    if (m_exportCancelToken) {
+        m_exportCancelToken->store(true);
+    }
     setLogText("Cancelling export...");
 }
 

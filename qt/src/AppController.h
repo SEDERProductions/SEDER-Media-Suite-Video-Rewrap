@@ -8,6 +8,7 @@
 #include <QObject>
 #include <atomic>
 #include <functional>
+#include <memory>
 
 class AppController : public QObject
 {
@@ -166,5 +167,6 @@ private:
     QString m_theme = "system";
     bool m_darkMode = true;
     std::atomic_bool m_cancelExport = false;
+    std::shared_ptr<std::atomic_bool> m_exportCancelToken;
     qint64 m_lastToolCheckMs = 0;
 };
