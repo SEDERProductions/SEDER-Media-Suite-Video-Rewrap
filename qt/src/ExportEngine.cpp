@@ -191,11 +191,21 @@ void ExportEngine::startExport(
             }, Qt::QueuedConnection);
             const ProcessResult result = ProcessUtil::runCommand(command.program, command.args, &m_cancelExport);
             if (!result.ok) {
-                QMetaObject::invokeMethod(this, [this, path, result] {
+                const int segmentIndex = i + 1;
+                QMetaObject::invokeMethod(this, [this, path, result, segmentIndex, plannedSegments] {
                     setBusy(false);
                     setProgress(0.0);
-                    emit logMessage(QStringLiteral("Segment export failed for %1\n%2")
-                        .arg(displayPath(path), result.stderrText));
+                    const QString summary = QStringLiteral("Segment export failed for %1\n%2")
+                        .arg(displayPath(path), result.stderrText);
+                    const QString details = QStringLiteral(
+                        "Segment %1 of %2 failed\nOutput path: %3\nFFmpeg exit code: %4\n\n--- ffmpeg stderr ---\n%5")
+                        .arg(segmentIndex)
+                        .arg(plannedSegments.size())
+                        .arg(displayPath(path))
+                        .arg(result.exitCode)
+                        .arg(result.stderrText);
+                    emit errorReport(details);
+                    emit logMessage(summary);
                 }, Qt::QueuedConnection);
                 return;
             }
@@ -252,6 +262,12 @@ void ExportEngine::startExport(
                 emit logMessage(QStringLiteral("Export complete: %1").arg(displayPath(outputPath)));
             } else {
                 setProgress(0.0);
+                const QString details = QStringLiteral(
+                    "Concat step failed\nOutput path: %1\nFFmpeg exit code: %2\n\n--- ffmpeg stderr ---\n%3")
+                    .arg(displayPath(outputPath))
+                    .arg(result.exitCode)
+                    .arg(result.stderrText);
+                emit errorReport(details);
                 emit logMessage(QStringLiteral("Export failed. No re-encode fallback was attempted.\n%1")
                     .arg(result.stderrText));
             }

@@ -60,6 +60,7 @@ signals:
     void progressChanged(double progress);
     void exportModeChanged(QString mode);
     void logMessage(QString message);
+    void errorReport(QString details);
 
 
 private:

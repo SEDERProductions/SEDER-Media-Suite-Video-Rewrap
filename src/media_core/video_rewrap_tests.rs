@@ -221,6 +221,144 @@ fn project_loads_old_save_without_version_field() {
 }
 
 #[test]
+fn migrates_unversioned_project_to_current_version() {
+    let project = parse_project_json(LEGACY_PROJECT_JSON).unwrap();
+    assert_eq!(project.version, CURRENT_PROJECT_VERSION);
+    assert_eq!(project.segments.len(), 1);
+    assert_eq!(project.source_file, "src.mov");
+}
+
+#[test]
+fn rejects_project_saved_by_newer_app() {
+    // A future build saves with version=99; the current app should refuse.
+    let future = r#"{ "version": 99, "source_file": "", "output_file": "", "segments": [] }"#;
+    let err = parse_project_json(future).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("newer version") || msg.contains("Update the app"),
+        "expected newer-version error, got: {msg}"
+    );
+}
+
+#[test]
+fn roundtrips_migrated_project_through_save() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("legacy.json");
+    std::fs::write(&path, LEGACY_PROJECT_JSON).unwrap();
+    let project = load_project(&path).unwrap();
+    assert_eq!(project.version, CURRENT_PROJECT_VERSION);
+    save_project(&path, &project).unwrap();
+    let reread = load_project(&path).unwrap();
+    assert_eq!(reread, project);
+}
+
+#[test]
+fn parses_real_ffmpeg_version_strings() {
+    // Real outputs from ffmpeg.org builds and distro packages.
+    assert_eq!(
+        parse_ffmpeg_version("ffmpeg version 6.1.1 Copyright (c) 2000-2023 the FFmpeg developers"),
+        Some(SemVer {
+            major: 6,
+            minor: 1,
+            patch: 1
+        }),
+    );
+    assert_eq!(
+        parse_ffmpeg_version("ffmpeg version n4.4 Copyright (c) ..."),
+        Some(SemVer {
+            major: 4,
+            minor: 4,
+            patch: 0
+        }),
+    );
+    assert_eq!(
+        parse_ffmpeg_version("ffmpeg version 7.0-static https://johnvansickle.com/ffmpeg/"),
+        Some(SemVer {
+            major: 7,
+            minor: 0,
+            patch: 0
+        }),
+    );
+    // Git snapshot builds carry an N- prefix and no real numeric version —
+    // we surface that as "unknown" rather than guessing.
+    assert_eq!(
+        parse_ffmpeg_version("ffmpeg version N-114000-g0123abcd Copyright ..."),
+        None,
+    );
+}
+
+#[test]
+fn ffmpeg_compatibility_accepts_supported_versions() {
+    let compat = ffmpeg_compatibility("ffmpeg version 6.0 Copyright (c) ...");
+    assert!(compat.compatible);
+    assert_eq!(compat.detected.unwrap().major, 6);
+}
+
+#[test]
+fn ffmpeg_compatibility_flags_old_versions() {
+    let compat = ffmpeg_compatibility("ffmpeg version 3.4.8 Copyright (c) ...");
+    assert!(!compat.compatible);
+    assert!(compat.message.contains("older than"));
+}
+
+#[test]
+fn ffmpeg_compatibility_reports_unparseable_output() {
+    let compat = ffmpeg_compatibility("totally unrelated text");
+    assert!(!compat.compatible);
+    assert!(compat.detected.is_none());
+}
+
+#[test]
+fn semver_comparison_orders_correctly() {
+    let a = parse_semver("1.2.3").unwrap();
+    let b = parse_semver("1.2.4").unwrap();
+    let c = parse_semver("1.10.0").unwrap();
+    assert!(a < b);
+    assert!(b < c);
+    assert_eq!(
+        parse_semver("v0.1.29"),
+        Some(SemVer {
+            major: 0,
+            minor: 1,
+            patch: 29
+        })
+    );
+    assert!(parse_semver("not-a-version").is_none());
+}
+
+#[test]
+fn update_check_detects_newer_release() {
+    let latest = r#"{"version":"0.2.0","url":"https://example.invalid/release"}"#;
+    let info = evaluate_update(latest, "0.1.29").unwrap();
+    assert!(info.update_available);
+    assert_eq!(info.url, "https://example.invalid/release");
+    assert!(info.message.contains("Update available"));
+}
+
+#[test]
+fn update_check_reports_up_to_date() {
+    let latest = r#"{"version":"0.1.29"}"#;
+    let info = evaluate_update(latest, "0.1.29").unwrap();
+    assert!(!info.update_available);
+    assert_eq!(info.url, "");
+    assert!(info.message.contains("Up to date"));
+}
+
+#[test]
+fn update_check_ignores_older_advertised_version() {
+    let latest = r#"{"version":"0.0.5"}"#;
+    let info = evaluate_update(latest, "0.1.29").unwrap();
+    assert!(!info.update_available);
+}
+
+#[test]
+fn update_check_rejects_malformed_payload() {
+    assert!(evaluate_update("not json", "0.1.29").is_err());
+    assert!(evaluate_update(r#"{"foo":"bar"}"#, "0.1.29").is_err());
+    assert!(evaluate_update(r#"{"version":"not-a-version"}"#, "0.1.29").is_err());
+}
+
+#[test]
 fn ffmpeg_segment_snaps_drifted_input_to_actual_keyframes() {
     // Real keyframes round-tripped through f64 → i64 ms.
     let keyframes = mk_keyframes(&DRIFTED_KEYFRAMES);

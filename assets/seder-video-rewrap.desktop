@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=SEDER Video Rewrap
+GenericName=Video Rewrap Utility
+Comment=Build keyframe-aligned video segments and export with FFmpeg stream copy
+Exec=seder-video-rewrap %F
+Icon=seder-video-rewrap
+Terminal=false
+Categories=AudioVideo;Video;Utility;
+MimeType=video/quicktime;video/mp4;video/x-matroska;application/x-seder-rewrap-project;
+Keywords=video;ffmpeg;rewrap;keyframe;stream-copy;
+StartupNotify=true
