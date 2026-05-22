@@ -196,30 +196,41 @@ pub fn parse_ffprobe_metadata(output: &str, source: &Path, file_size: u64) -> Vi
         file_size,
         ..VideoMetadata::default()
     };
+    let mut format_name = None;
+    let mut duration = None;
+    let mut width = None;
+    let mut height = None;
+    let mut codec = None;
+    let mut avg_frame_rate = None;
+    let mut r_frame_rate = None;
+
     for line in output.lines() {
         let Some((key, value)) = line.split_once('=') else {
             continue;
         };
+        let key = key.trim();
         let value = value.trim();
-        match key.trim() {
-            "format_name" => metadata.container = Some(value.to_string()),
-            "duration" => {
-                metadata.duration_ms = value
-                    .parse::<f64>()
-                    .ok()
-                    .map(|seconds| (seconds * 1000.0).round() as i64);
-            }
-            "width" => metadata.width = value.parse::<u32>().ok(),
-            "height" => metadata.height = value.parse::<u32>().ok(),
-            "codec_name" => metadata.codec = Some(value.to_string()),
-            "avg_frame_rate" | "r_frame_rate"
-                if metadata.frame_rate.is_none() && value != "0/0" =>
-            {
-                metadata.frame_rate = Some(value.to_string());
-            }
+        if value.is_empty() {
+            continue;
+        }
+        match key {
+            "format_name" => format_name = Some(value.to_string()),
+            "duration" => duration = value.parse::<f64>().ok(),
+            "width" => width = value.parse::<u32>().ok(),
+            "height" => height = value.parse::<u32>().ok(),
+            "codec_name" => codec = Some(value.to_string()),
+            "avg_frame_rate" if value != "0/0" => avg_frame_rate = Some(value.to_string()),
+            "r_frame_rate" if value != "0/0" => r_frame_rate = Some(value.to_string()),
             _ => {}
         }
     }
+
+    metadata.container = format_name;
+    metadata.duration_ms = duration.map(|seconds| (seconds * 1000.0).round() as i64);
+    metadata.width = width;
+    metadata.height = height;
+    metadata.codec = codec;
+    metadata.frame_rate = avg_frame_rate.or(r_frame_rate);
     metadata
 }
 
@@ -315,9 +326,16 @@ pub fn ffprobe_metadata_command(source: &Path) -> ProcessCommand {
     ProcessCommand {
         program: "ffprobe".into(),
         args: vec![
-            "-v".into(), "error".into(),
-            "-show_entries".into(), "format=format_name,duration:stream=codec_name,width,height,avg_frame_rate,r_frame_rate".into(),
-            "-of".into(), "default=noprint_wrappers=1".into(),
+            "-v".into(),
+            "error".into(),
+            "-show_entries".into(),
+            "format=format_name,duration".into(),
+            "-select_streams".into(),
+            "v:0".into(),
+            "-show_entries".into(),
+            "stream=codec_name,width,height,avg_frame_rate,r_frame_rate".into(),
+            "-of".into(),
+            "default=noprint_wrappers=1".into(),
             source.to_string_lossy().to_string(),
         ],
     }

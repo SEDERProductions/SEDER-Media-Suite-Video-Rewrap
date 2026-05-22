@@ -24,6 +24,26 @@ fn parses_ffprobe_metadata() {
 }
 
 #[test]
+fn ffprobe_metadata_command_targets_first_video_stream() {
+    let command = ffprobe_metadata_command(Path::new("/tmp/interview.mov"));
+    let args = command.args.join(" ");
+    assert!(args.contains("-show_entries format=format_name,duration"));
+    assert!(args.contains("-select_streams v:0"));
+    assert!(args.contains("-show_entries stream=codec_name,width,height,avg_frame_rate,r_frame_rate"));
+}
+
+#[test]
+fn parses_ffprobe_metadata_prefers_video_stream_fields_in_multistream_like_output() {
+    let output = "format_name=mov,mp4,m4a,3gp,3g2,mj2\n\ncodec_name=aac\nwidth=0\nheight=0\navg_frame_rate=0/0\n\ncodec_name=h264\nwidth=1920\nheight=1080\navg_frame_rate=24000/1001\nr_frame_rate=24000/1001\nduration=12.345000\n";
+    let meta = parse_ffprobe_metadata(output, Path::new("/tmp/interview.mov"), 99);
+    assert_eq!(meta.codec.as_deref(), Some("h264"));
+    assert_eq!(meta.width, Some(1920));
+    assert_eq!(meta.height, Some(1080));
+    assert_eq!(meta.frame_rate.as_deref(), Some("24000/1001"));
+    assert_eq!(meta.duration_ms, Some(12_345));
+}
+
+#[test]
 fn parses_and_formats_timecode() {
     assert_eq!(parse_timecode_to_ms("00:02:10.250").unwrap(), 130_250);
     assert_eq!(parse_timecode_to_ms("3.5").unwrap(), 3_500);
