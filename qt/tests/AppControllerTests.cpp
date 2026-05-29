@@ -4,6 +4,7 @@
 
 #include <QSettings>
 #include <QSignalSpy>
+#include <QStandardPaths>
 #include <QtTest/QtTest>
 
 class AppControllerTests : public QObject
@@ -21,6 +22,23 @@ private:
     }
 
 private slots:
+    void initTestCase()
+    {
+        // Make QSettings hermetic and identical across platforms. Without an
+        // organization name, QSettings falls back to platform-specific stores
+        // (the Windows registry in particular), which leaks state between
+        // tests and between CI runs and has produced Windows-only flakiness.
+        // Forcing IniFormat into the test's temp dir keeps every run isolated.
+        QCoreApplication::setOrganizationName(QStringLiteral("SederTest"));
+        QCoreApplication::setApplicationName(QStringLiteral("VideoRewrapTests"));
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        const QString scratch = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+            + QStringLiteral("/seder-rewrap-test-%1").arg(QCoreApplication::applicationPid());
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, scratch);
+        QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope, scratch);
+        QSettings().clear();
+    }
+
     void constructor_setsDefaults()
     {
         SegmentTableModel model;

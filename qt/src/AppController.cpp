@@ -416,13 +416,20 @@ void AppController::replaceFile()
         return;
     }
 
+    const QString originalSource = m_sourcePath;
+
+    // Validate preflight before renaming source, so we don't lose the file if validation fails
+    const QJsonObject preflight = RustBridge::rewrapPreflight(m_metadataJson, originalSource, m_segments->toJsonArray(), keyframesJson());
+    if (!preflight.value("ok").toBool()) {
+        setLogText(tr("Cannot replace: %1").arg(preflight.value("error").toString()));
+        return;
+    }
+
     QFile file(m_sourcePath);
     if (!file.rename(backupPath)) {
         setLogText(tr("Unable to rename source to backup: %1").arg(file.errorString()));
         return;
     }
-
-    const QString originalSource = m_sourcePath;
     m_sourcePath = backupPath;
     m_outputPath = originalSource;
     emit sourcePathChanged();
@@ -615,7 +622,16 @@ void AppController::toggleSegment(int row, bool enabled)
 void AppController::setTheme(const QString &theme)
 {
     const QString normalized = (theme == "light" || theme == "dark") ? theme : QStringLiteral("system");
-    const bool dark = normalized == "dark";
+    // For an explicit choice darkMode follows it directly; for "system" we
+    // honour the OS colour scheme so the QML palette tracks the desktop
+    // instead of being forced light. styleHints()->colorScheme() is available
+    // from Qt 6.5; on 6.4 we fall back to light for "system".
+    bool dark = normalized == "dark";
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    if (normalized == "system") {
+        dark = QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
+    }
+#endif
     const bool changed = normalized != m_theme || dark != m_darkMode;
     m_theme = normalized;
     m_darkMode = dark;

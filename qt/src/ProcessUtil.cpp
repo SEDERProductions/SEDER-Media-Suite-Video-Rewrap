@@ -55,7 +55,7 @@ ProcessResult ProcessUtil::runCommand(const QString &program, const QStringList 
     while (!process.waitForFinished(100)) {
         stdoutBuf += process.readAllStandardOutput();
         stderrBuf += process.readAllStandardError();
-        if (cancel && *cancel) {
+        if (cancel && cancel->load(std::memory_order_relaxed)) {
             process.kill();
             process.waitForFinished();
             result.stderrText = "Process cancelled.";

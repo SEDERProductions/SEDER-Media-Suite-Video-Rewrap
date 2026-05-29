@@ -99,6 +99,19 @@ fn container_extension_from_path(output: &Path) -> String {
         .to_ascii_lowercase()
 }
 
+pub fn validated_container_extension(output: &Path) -> Result<String> {
+    let ext = container_extension_from_path(output);
+    match ext.as_str() {
+        "mov" | "mp4" | "m4v" | "mkv" => Ok(ext),
+        "" => anyhow::bail!(
+            "Output file is missing an extension. Use .mov, .mp4, .m4v, or .mkv."
+        ),
+        other => anyhow::bail!(
+            "Unsupported output container '.{other}'. Use .mov, .mp4, .m4v, or .mkv for stream-copy export."
+        ),
+    }
+}
+
 pub fn rewrap_preflight(
     _metadata: &VideoMetadata,
     segments: &[RewrapSegment],
@@ -111,12 +124,11 @@ pub fn rewrap_preflight(
         anyhow::bail!("No enabled segments to export. Enable at least one segment.");
     }
 
-    let ext = container_extension_from_path(output);
+    let ext = validated_container_extension(output)?;
     let mut guidance = vec!["No re-encode fallback is available in this export path.".into()];
 
     guidance.push(format!(
-        "Output container '.{}' will be used with stream-copy. If ffmpeg reports a muxer error, try a different container format.",
-        if ext.is_empty() { "mov" } else { &ext }
+        "Output container '.{ext}' will be used with stream-copy. If ffmpeg reports a muxer error, try a different container format."
     ));
 
     Ok(RewrapPreflight {

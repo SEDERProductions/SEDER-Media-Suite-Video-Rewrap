@@ -45,4 +45,5 @@ private:
     QJsonObject m_metadataJson;
     QVector<qint64> m_keyframes;
     qint64 m_lastToolCheckMs = 0;
+    QString m_currentProbePath; // track current probe to ignore stale completions
 };
