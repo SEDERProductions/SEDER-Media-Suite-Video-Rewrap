@@ -622,7 +622,16 @@ void AppController::toggleSegment(int row, bool enabled)
 void AppController::setTheme(const QString &theme)
 {
     const QString normalized = (theme == "light" || theme == "dark") ? theme : QStringLiteral("system");
-    const bool dark = normalized == "dark";
+    // For an explicit choice darkMode follows it directly; for "system" we
+    // honour the OS colour scheme so the QML palette tracks the desktop
+    // instead of being forced light. styleHints()->colorScheme() is available
+    // from Qt 6.5; on 6.4 we fall back to light for "system".
+    bool dark = normalized == "dark";
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    if (normalized == "system") {
+        dark = QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
+    }
+#endif
     const bool changed = normalized != m_theme || dark != m_darkMode;
     m_theme = normalized;
     m_darkMode = dark;
