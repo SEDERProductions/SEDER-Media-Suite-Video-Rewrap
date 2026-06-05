@@ -6,6 +6,8 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
+#include <QUrl>
+#include <QVariantList>
 #include <atomic>
 #include <functional>
 
@@ -35,6 +37,17 @@ class AppController : public QObject
     Q_PROPERTY(int selectedRow READ selectedRow NOTIFY selectedRowChanged)
     Q_PROPERTY(QString theme READ theme WRITE setTheme NOTIFY themeChanged)
     Q_PROPERTY(bool darkMode READ darkMode NOTIFY themeChanged)
+    Q_PROPERTY(QUrl videoUrl READ videoUrl NOTIFY sourcePathChanged)
+    Q_PROPERTY(qint64 durationMs READ durationMs NOTIFY metadataChanged)
+    Q_PROPERTY(QVariantList keyframesMs READ keyframesMs NOTIFY keyframesChanged)
+    Q_PROPERTY(qint64 currentKeyframeMs READ currentKeyframeMs NOTIFY keyframesChanged)
+    Q_PROPERTY(qint64 inMs READ inMs NOTIFY markersChanged)
+    Q_PROPERTY(qint64 outMs READ outMs NOTIFY markersChanged)
+    Q_PROPERTY(QUrl inThumbUrl READ inThumbUrl NOTIFY thumbnailsChanged)
+    Q_PROPERTY(QUrl outThumbUrl READ outThumbUrl NOTIFY thumbnailsChanged)
+    Q_PROPERTY(QString noticeText READ noticeText NOTIFY noticeChanged)
+    Q_PROPERTY(QString noticeTone READ noticeTone NOTIFY noticeChanged)
+    Q_PROPERTY(bool probing READ probing NOTIFY probingChanged)
 
 public:
     explicit AppController(SegmentTableModel *segments, QObject *parent = nullptr);
@@ -62,6 +75,17 @@ public:
     int selectedRow() const;
     QString theme() const;
     bool darkMode() const;
+    QUrl videoUrl() const;
+    qint64 durationMs() const;
+    QVariantList keyframesMs() const;
+    qint64 currentKeyframeMs() const;
+    qint64 inMs() const;
+    qint64 outMs() const;
+    QUrl inThumbUrl() const;
+    QUrl outThumbUrl() const;
+    QString noticeText() const;
+    QString noticeTone() const;
+    bool probing() const;
 
     Q_INVOKABLE void openSource();
     Q_INVOKABLE void chooseOutput();
@@ -86,6 +110,10 @@ public:
     Q_INVOKABLE void moveSegmentDown(int row);
     Q_INVOKABLE void toggleSegment(int row, bool enabled);
     Q_INVOKABLE void setTheme(const QString &theme);
+    Q_INVOKABLE qint64 snapToKeyframe(qint64 ms);
+    Q_INVOKABLE void openDroppedFile(const QUrl &url);
+    Q_INVOKABLE void dismissNotice();
+    Q_INVOKABLE bool outputExists() const;
 
 signals:
     void sourcePathChanged();
@@ -100,6 +128,9 @@ signals:
     void segmentsChanged();
     void selectedRowChanged();
     void themeChanged();
+    void thumbnailsChanged();
+    void noticeChanged();
+    void probingChanged();
 
 private:
     struct ProcessResult {
@@ -123,7 +154,6 @@ private:
     QString displayPath(const QString &path) const;
     QString toolStatusText() const;
     QJsonArray keyframesJson() const;
-    qint64 currentKeyframeMs() const;
     static bool programExists(const QString &program);
     static ProcessResult runCommand(const RustBridge::Command &command, std::atomic_bool *cancel = nullptr);
     static QString bytesText(quint64 bytes);
@@ -138,6 +168,11 @@ private:
         const QString &successLog);
     void recheckToolsCached();
     void recheckToolsBackground();
+    void setNotice(const QString &text, const QString &tone);
+    void setError(const QString &text);
+    void setProbing(bool probing);
+    void generateThumbnail(qint64 timeMs, bool isIn);
+    QString ensureThumbDir();
 
     SegmentTableModel *m_segments = nullptr;
     QString m_sourcePath;
@@ -167,4 +202,12 @@ private:
     bool m_darkMode = true;
     std::atomic_bool m_cancelExport = false;
     qint64 m_lastToolCheckMs = 0;
+    QString m_noticeText;
+    QString m_noticeTone;
+    bool m_probing = false;
+    QUrl m_inThumbUrl;
+    QUrl m_outThumbUrl;
+    QString m_inThumbFile;
+    QString m_outThumbFile;
+    QString m_thumbDirPath;
 };

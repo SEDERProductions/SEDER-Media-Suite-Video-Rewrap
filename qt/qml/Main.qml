@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
+import QtMultimedia
 
 ApplicationWindow {
     id: root
@@ -61,6 +62,44 @@ ApplicationWindow {
     readonly property string monoFontFamily: Qt.platform.os === "osx"
         ? "Menlo"
         : (Qt.platform.os === "windows" ? "Consolas" : "Monospace")
+
+    // Shared denominator for the preview timeline: keyframes are in the app's ms
+    // domain, so prefer the probed duration and fall back to the player's own.
+    readonly property real previewDurationMs: app.durationMs > 0
+        ? app.durationMs
+        : (player.duration > 0 ? player.duration : 0)
+    // Single-key shortcuts (I/O/Space/arrows) must not fire while typing in a field.
+    readonly property bool typing: (jumpTime && jumpTime.activeFocus)
+        || (segmentName && segmentName.activeFocus)
+        || (segmentNotes && segmentNotes.activeFocus)
+    property bool previewingSegment: false
+    property string previewError: ""
+
+    function noticeColor(tone) {
+        if (tone === "bad")
+            return bad
+        if (tone === "warn")
+            return warn
+        if (tone === "good")
+            return good
+        return accent
+    }
+
+    function fmtClock(ms) {
+        if (!ms || ms < 0)
+            ms = 0
+        var totalSeconds = Math.floor(ms / 1000)
+        var minutes = Math.floor(totalSeconds / 60)
+        var seconds = totalSeconds % 60
+        return (minutes < 10 ? "0" : "") + minutes + ":" + (seconds < 10 ? "0" : "") + seconds
+    }
+
+    function togglePreviewPlayback() {
+        if (player.playbackState === MediaPlayer.PlayingState)
+            player.pause()
+        else
+            player.play()
+    }
 
     color: bg
 
@@ -290,7 +329,7 @@ ApplicationWindow {
                         primary: true
                         enabled: !app.busy
                         Layout.fillWidth: true
-                        onClicked: app.startExport()
+                        onClicked: app.outputExists() ? overwriteDialog.open() : app.startExport()
                     }
                     CommandButton {
                         text: "Cancel Export"
@@ -331,6 +370,31 @@ ApplicationWindow {
                     spacing: 12
 
                     Panel {
+                        id: noticeBanner
+                        Layout.fillWidth: true
+                        visible: app.noticeText.length > 0
+                        implicitHeight: visible ? noticeRow.implicitHeight + 20 : 0
+                        readonly property color tone: root.noticeColor(app.noticeTone)
+                        color: Qt.rgba(tone.r, tone.g, tone.b, 0.14)
+                        border.color: tone
+                        RowLayout {
+                            id: noticeRow
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            spacing: 10
+                            Label {
+                                text: app.noticeText
+                                color: root.ink
+                                font.family: root.uiFontFamily
+                                font.pixelSize: 13
+                                wrapMode: Text.Wrap
+                                Layout.fillWidth: true
+                            }
+                            CommandButton { text: "Dismiss"; onClicked: app.dismissNotice() }
+                        }
+                    }
+
+                    Panel {
                         Layout.fillWidth: true
                         implicitHeight: compactLayout ? 154 : 134
                         ColumnLayout {
@@ -348,6 +412,203 @@ ApplicationWindow {
                                 Metric { label: "Size"; value: app.sizeText; Layout.fillWidth: true }
                             }
                             PathLabel { text: app.mediaSummary; Layout.fillWidth: true }
+                        }
+                    }
+
+                    Panel {
+                        Layout.fillWidth: true
+                        implicitHeight: compactLayout ? 360 : 420
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 10
+                            RowLayout {
+                                Layout.fillWidth: true
+                                MetaLabel { text: "VIDEO PREVIEW"; Layout.fillWidth: true }
+                                StatusPill {
+                                    text: app.ffplayReady ? "FFPLAY OK" : "NO FFPLAY"
+                                    tone: app.ffplayReady ? good : warn
+                                }
+                            }
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                color: "#000000"
+                                radius: 4
+                                border.color: line
+                                clip: true
+                                VideoOutput {
+                                    id: videoOut
+                                    anchors.fill: parent
+                                    anchors.margins: 1
+                                    fillMode: VideoOutput.PreserveAspectFit
+                                }
+                                Label {
+                                    anchors.centerIn: parent
+                                    visible: app.videoUrl.toString().length === 0
+                                    text: "Open or drop a video to preview"
+                                    color: faint
+                                    font.family: root.uiFontFamily
+                                    font.pixelSize: 14
+                                }
+                                Rectangle {
+                                    anchors.fill: parent
+                                    visible: root.previewError.length > 0
+                                    color: Qt.rgba(0, 0, 0, 0.72)
+                                    Label {
+                                        anchors.centerIn: parent
+                                        width: parent.width - 40
+                                        text: root.previewError
+                                        color: "white"
+                                        horizontalAlignment: Text.AlignHCenter
+                                        wrapMode: Text.Wrap
+                                        font.family: root.uiFontFamily
+                                        font.pixelSize: 13
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                id: timelineTrack
+                                Layout.fillWidth: true
+                                implicitHeight: 28
+                                radius: 4
+                                color: panelAlt
+                                border.color: line
+                                clip: true
+                                Rectangle {
+                                    visible: app.inMs >= 0 && app.outMs > app.inMs && root.previewDurationMs > 0
+                                    color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.25)
+                                    anchors.top: parent.top
+                                    anchors.bottom: parent.bottom
+                                    x: root.previewDurationMs > 0 ? timelineTrack.width * (app.inMs / root.previewDurationMs) : 0
+                                    width: root.previewDurationMs > 0 ? timelineTrack.width * ((app.outMs - app.inMs) / root.previewDurationMs) : 0
+                                }
+                                Repeater {
+                                    model: app.keyframesMs
+                                    Rectangle {
+                                        width: 1
+                                        height: 8
+                                        y: 4
+                                        color: root.faint
+                                        x: root.previewDurationMs > 0 ? timelineTrack.width * (modelData / root.previewDurationMs) : 0
+                                    }
+                                }
+                                Rectangle {
+                                    width: 2
+                                    anchors.top: parent.top
+                                    anchors.bottom: parent.bottom
+                                    color: root.accent
+                                    x: root.previewDurationMs > 0 ? timelineTrack.width * (player.position / root.previewDurationMs) : 0
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: root.previewDurationMs > 0
+                                    onPressed: (mouse) => {
+                                        var frac = Math.max(0, Math.min(1, mouse.x / width))
+                                        player.setPosition(app.snapToKeyframe(Math.round(frac * root.previewDurationMs)))
+                                    }
+                                    onPositionChanged: (mouse) => {
+                                        if (pressed) {
+                                            var frac = Math.max(0, Math.min(1, mouse.x / width))
+                                            player.setPosition(app.snapToKeyframe(Math.round(frac * root.previewDurationMs)))
+                                        }
+                                    }
+                                }
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                CommandButton {
+                                    text: player.playbackState === MediaPlayer.PlayingState ? "Pause" : "Play"
+                                    enabled: app.videoUrl.toString().length > 0
+                                    onClicked: root.togglePreviewPlayback()
+                                }
+                                CommandButton {
+                                    text: "Preview Segment"
+                                    enabled: app.inMs >= 0 && app.outMs > app.inMs
+                                    onClicked: {
+                                        root.previewingSegment = true
+                                        player.setPosition(app.inMs)
+                                        player.play()
+                                    }
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "Play from the IN marker and stop at the OUT marker."
+                                }
+                                CommandButton {
+                                    text: "Seek to Keyframe"
+                                    enabled: app.keyframeCount > 0
+                                    onClicked: player.setPosition(app.currentKeyframeMs)
+                                }
+                                Label {
+                                    text: root.fmtClock(player.position) + " / " + root.fmtClock(root.previewDurationMs)
+                                    color: muted
+                                    font.family: root.monoFontFamily
+                                    font.pixelSize: 12
+                                }
+                                Item { Layout.fillWidth: true }
+                                CommandButton {
+                                    text: "Open in FFplay"
+                                    enabled: app.ffplayReady
+                                    onClicked: app.previewCurrent()
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "Fallback: open the current keyframe in an external FFplay window."
+                                }
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+                                ColumnLayout {
+                                    spacing: 4
+                                    MetaLabel { text: "IN FRAME " + app.pendingInText }
+                                    Rectangle {
+                                        Layout.preferredWidth: 132
+                                        Layout.preferredHeight: 74
+                                        color: panelAlt
+                                        border.color: line
+                                        radius: 4
+                                        clip: true
+                                        Image {
+                                            anchors.fill: parent
+                                            anchors.margins: 1
+                                            fillMode: Image.PreserveAspectFit
+                                            cache: false
+                                            source: app.inThumbUrl
+                                            visible: app.inThumbUrl.toString().length > 0
+                                        }
+                                        MetaLabel {
+                                            anchors.centerIn: parent
+                                            text: "NO IN FRAME"
+                                            visible: app.inThumbUrl.toString().length === 0
+                                        }
+                                    }
+                                }
+                                ColumnLayout {
+                                    spacing: 4
+                                    MetaLabel { text: "OUT FRAME " + app.pendingOutText }
+                                    Rectangle {
+                                        Layout.preferredWidth: 132
+                                        Layout.preferredHeight: 74
+                                        color: panelAlt
+                                        border.color: line
+                                        radius: 4
+                                        clip: true
+                                        Image {
+                                            anchors.fill: parent
+                                            anchors.margins: 1
+                                            fillMode: Image.PreserveAspectFit
+                                            cache: false
+                                            source: app.outThumbUrl
+                                            visible: app.outThumbUrl.toString().length > 0
+                                        }
+                                        MetaLabel {
+                                            anchors.centerIn: parent
+                                            text: "NO OUT FRAME"
+                                            visible: app.outThumbUrl.toString().length === 0
+                                        }
+                                    }
+                                }
+                                Item { Layout.fillWidth: true }
+                            }
                         }
                     }
 
@@ -512,6 +773,73 @@ ApplicationWindow {
                     Layout.fillWidth: true
                 }
             }
+        }
+    }
+
+    MediaPlayer {
+        id: player
+        source: app.videoUrl
+        videoOutput: videoOut
+        audioOutput: AudioOutput { id: audioOut }
+        onErrorOccurred: function(error, errorString) {
+            root.previewError = "In-app preview can't decode this file. Use \"Open in FFplay\".\n" + errorString
+        }
+        onSourceChanged: {
+            root.previewError = ""
+            root.previewingSegment = false
+        }
+        onPositionChanged: {
+            if (root.previewingSegment && app.outMs >= 0 && position >= app.outMs) {
+                player.pause()
+                root.previewingSegment = false
+            }
+        }
+    }
+
+    DropArea {
+        anchors.fill: parent
+        keys: ["text/uri-list"]
+        onDropped: function(drop) {
+            if (drop.hasUrls && drop.urls.length > 0)
+                app.openDroppedFile(drop.urls[0])
+        }
+        Rectangle {
+            anchors.fill: parent
+            visible: parent.containsDrag
+            color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.12)
+            border.color: root.accent
+            border.width: 2
+            radius: 6
+            Label {
+                anchors.centerIn: parent
+                text: "Drop a video file to open"
+                color: root.ink
+                font.family: root.uiFontFamily
+                font.pixelSize: 18
+                font.bold: true
+            }
+        }
+    }
+
+    Shortcut { sequence: "Left"; enabled: !root.typing; onActivated: app.previousKeyframe() }
+    Shortcut { sequence: "Right"; enabled: !root.typing; onActivated: app.nextKeyframe() }
+    Shortcut { sequence: "I"; enabled: !root.typing; onActivated: app.setIn() }
+    Shortcut { sequence: "O"; enabled: !root.typing; onActivated: app.setOut() }
+    Shortcut { sequence: "Space"; enabled: !root.typing; onActivated: root.togglePreviewPlayback() }
+
+    Dialog {
+        id: overwriteDialog
+        anchors.centerIn: parent
+        modal: true
+        title: "Overwrite existing file?"
+        standardButtons: Dialog.Yes | Dialog.No
+        onAccepted: app.startExport()
+        Label {
+            text: "The output file already exists and will be overwritten:\n" + app.outputPath
+            color: root.ink
+            wrapMode: Text.Wrap
+            font.family: root.uiFontFamily
+            font.pixelSize: 13
         }
     }
 }

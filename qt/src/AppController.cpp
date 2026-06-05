@@ -13,6 +13,8 @@
 #include <QStandardPaths>
 #include <QStyleHints>
 #include <QThread>
+#include <QUrl>
+#include <QVariant>
 #include <algorithm>
 
 AppController::AppController(SegmentTableModel *segments, QObject *parent)
@@ -54,6 +56,35 @@ int AppController::selectedRow() const { return m_selectedRow; }
 QString AppController::theme() const { return m_theme; }
 bool AppController::darkMode() const { return m_darkMode; }
 
+QUrl AppController::videoUrl() const
+{
+    return m_sourcePath.isEmpty() ? QUrl() : QUrl::fromLocalFile(m_sourcePath);
+}
+
+qint64 AppController::durationMs() const
+{
+    const QJsonValue duration = m_metadataJson.value("duration_ms");
+    return duration.isNull() ? 0 : static_cast<qint64>(duration.toDouble());
+}
+
+QVariantList AppController::keyframesMs() const
+{
+    QVariantList list;
+    list.reserve(m_keyframes.size());
+    for (qint64 keyframe : m_keyframes) {
+        list.push_back(QVariant::fromValue(keyframe));
+    }
+    return list;
+}
+
+qint64 AppController::inMs() const { return m_hasPendingIn ? m_pendingIn : -1; }
+qint64 AppController::outMs() const { return m_hasPendingOut ? m_pendingOut : -1; }
+QUrl AppController::inThumbUrl() const { return m_inThumbUrl; }
+QUrl AppController::outThumbUrl() const { return m_outThumbUrl; }
+QString AppController::noticeText() const { return m_noticeText; }
+QString AppController::noticeTone() const { return m_noticeTone; }
+bool AppController::probing() const { return m_probing; }
+
 void AppController::openSource()
 {
     if (m_busy) {
@@ -67,6 +98,21 @@ void AppController::openSource()
         "Video Files (*.mov *.mp4 *.mkv *.m4v);;All Files (*)");
     if (path.isEmpty()) {
         setLogText("Open video cancelled.");
+        return;
+    }
+    setSourcePath(path);
+    probeSource(path);
+}
+
+void AppController::openDroppedFile(const QUrl &url)
+{
+    if (m_busy) {
+        setNotice("Another operation is already running.", "warn");
+        return;
+    }
+    const QString path = url.toLocalFile();
+    if (path.isEmpty()) {
+        setError("Could not open the dropped item. Drop a local video file.");
         return;
     }
     setSourcePath(path);
@@ -127,6 +173,11 @@ void AppController::recheckToolsBackground()
             m_lastToolCheckMs = timestamp;
             emit toolsChanged();
             setLogText(toolStatusText());
+            if (!ffmpegOk || !ffprobeOk) {
+                setNotice(toolStatusText(), "bad");
+            } else if (!ffplayOk) {
+                setNotice(toolStatusText(), "warn");
+            }
         }, Qt::QueuedConnection);
     });
     connect(worker, &QThread::finished, worker, &QObject::deleteLater);
@@ -248,7 +299,7 @@ void AppController::startExport()
 
     const QJsonObject preflight = RustBridge::rewrapPreflight(m_metadataJson, m_outputPath, m_segments->toJsonArray(), keyframesJson());
     if (!preflight.value("ok").toBool()) {
-        setLogText(preflight.value("error").toString());
+        setError(preflight.value("error").toString());
         return;
     }
     setLogText("Preflight passed. No re-encode fallback is available; stream-copy export will proceed.");
@@ -263,7 +314,7 @@ void AppController::startExport()
         m_segments->toJsonArray(),
         keyframesJson());
     if (!plan.value("ok").toBool()) {
-        setLogText(plan.value("error").toString());
+        setError(plan.value("error").toString());
         return;
     }
 
@@ -300,7 +351,7 @@ void AppController::startExport()
                 QMetaObject::invokeMethod(this, [this, path, result] {
                     setBusy(false);
                     setProgress(0.0);
-                    setLogText(QStringLiteral("Segment export failed for %1\n%2")
+                    setError(QStringLiteral("Segment export failed for %1\n%2")
                         .arg(displayPath(path), result.stderrText));
                 }, Qt::QueuedConnection);
                 return;
@@ -314,7 +365,7 @@ void AppController::startExport()
             QMetaObject::invokeMethod(this, [this, error] {
                 setBusy(false);
                 setProgress(0.0);
-                setLogText(QStringLiteral("Unable to write concat list: %1").arg(error));
+                setError(QStringLiteral("Unable to write concat list: %1").arg(error));
             }, Qt::QueuedConnection);
             return;
         }
@@ -333,10 +384,11 @@ void AppController::startExport()
             setBusy(false);
             if (result.ok) {
                 setProgress(1.0);
+                dismissNotice();
                 setLogText(QStringLiteral("Export complete: %1").arg(displayPath(m_outputPath)));
             } else {
                 setProgress(0.0);
-                setLogText(QStringLiteral("Export failed. No re-encode fallback was attempted.\n%1")
+                setError(QStringLiteral("Export failed. No re-encode fallback was attempted.\n%1")
                     .arg(result.stderrText));
             }
         }, Qt::QueuedConnection);
@@ -379,6 +431,27 @@ void AppController::jumpToTimecode(const QString &timecode)
         .arg(distance));
 }
 
+qint64 AppController::snapToKeyframe(qint64 ms)
+{
+    if (m_keyframes.isEmpty()) {
+        return 0;
+    }
+    const QJsonObject snap = RustBridge::nearestKeyframe(keyframesJson(), ms);
+    if (!snap.value("ok").toBool()) {
+        return currentKeyframeMs();
+    }
+    const qint64 snapped = static_cast<qint64>(snap.value("snap").toObject().value("snapped_ms").toDouble());
+    const auto it = std::lower_bound(m_keyframes.begin(), m_keyframes.end(), snapped);
+    if (it != m_keyframes.end() && *it == snapped) {
+        const int index = static_cast<int>(std::distance(m_keyframes.begin(), it));
+        if (index != m_currentIndex) {
+            m_currentIndex = index;
+            emit keyframesChanged();
+        }
+    }
+    return snapped;
+}
+
 void AppController::previousKeyframe()
 {
     if (m_currentIndex > 0) {
@@ -399,7 +472,7 @@ void AppController::previewCurrent()
 {
     recheckToolsCached();
     if (!m_ffplayReady) {
-        setLogText(toolStatusText());
+        setError(toolStatusText());
         return;
     }
     if (m_sourcePath.isEmpty() || m_keyframes.isEmpty()) {
@@ -408,14 +481,14 @@ void AppController::previewCurrent()
     }
     const QJsonObject reply = RustBridge::ffplayPreviewCommand(m_sourcePath, currentKeyframeMs());
     if (!reply.value("ok").toBool()) {
-        setLogText(reply.value("error").toString());
+        setError(reply.value("error").toString());
         return;
     }
     const RustBridge::Command command = RustBridge::commandFromJson(reply.value("command").toObject());
     if (QProcess::startDetached(command.program, command.args)) {
         setLogText("Preview opened in FFplay.");
     } else {
-        setLogText("Unable to open FFplay.");
+        setError("Unable to open FFplay.");
     }
 }
 
@@ -428,6 +501,7 @@ void AppController::setIn()
     m_pendingIn = currentKeyframeMs();
     m_hasPendingIn = true;
     emit markersChanged();
+    generateThumbnail(m_pendingIn, true);
 }
 
 void AppController::setOut()
@@ -439,6 +513,7 @@ void AppController::setOut()
     m_pendingOut = currentKeyframeMs();
     m_hasPendingOut = true;
     emit markersChanged();
+    generateThumbnail(m_pendingOut, false);
 }
 
 void AppController::addSegment(const QString &name, const QString &notes)
@@ -600,10 +675,11 @@ void AppController::probeSource(const QString &path)
 {
     clearMediaState();
     if (!m_ffprobeReady) {
-        setLogText(toolStatusText());
+        setError(toolStatusText());
         return;
     }
     setBusy(true);
+    setProbing(true);
     setProgress(0.1);
     setLogText("Probing video metadata and keyframes...");
 
@@ -614,8 +690,9 @@ void AppController::probeSource(const QString &path)
             const QString error = metadataReply.value("error").toString(keyframeReply.value("error").toString());
             QMetaObject::invokeMethod(this, [this, error] {
                 setBusy(false);
+                setProbing(false);
                 setProgress(0.0);
-                setLogText(error);
+                setError(error);
             }, Qt::QueuedConnection);
             return;
         }
@@ -626,8 +703,9 @@ void AppController::probeSource(const QString &path)
             const QString error = !metadata.ok ? metadata.stderrText : keyframes.stderrText;
             QMetaObject::invokeMethod(this, [this, error] {
                 setBusy(false);
+                setProbing(false);
                 setProgress(0.0);
-                setLogText(QStringLiteral("Probe failed: %1").arg(error));
+                setError(QStringLiteral("Probe failed: %1").arg(error));
             }, Qt::QueuedConnection);
             return;
         }
@@ -640,13 +718,15 @@ void AppController::probeSource(const QString &path)
             keyframes.stdoutText);
         QMetaObject::invokeMethod(this, [this, parsed] {
             setBusy(false);
+            setProbing(false);
             if (!parsed.value("ok").toBool()) {
                 setProgress(0.0);
-                setLogText(QStringLiteral("Probe failed: %1").arg(parsed.value("error").toString()));
+                setError(QStringLiteral("Probe failed: %1").arg(parsed.value("error").toString()));
                 return;
             }
             applyMetadata(parsed.value("metadata").toObject(), parsed.value("keyframes").toArray());
             setProgress(0.0);
+            dismissNotice();
             setLogText(QStringLiteral("Detected %1 keyframes.").arg(m_keyframes.size()));
         }, Qt::QueuedConnection);
     });
@@ -667,9 +747,12 @@ void AppController::clearMediaState()
     m_codecText = "N/A";
     m_sizeText = "N/A";
     m_mediaSummary = "Open a video to inspect stream-copy-safe keyframes.";
+    m_inThumbUrl = QUrl();
+    m_outThumbUrl = QUrl();
     emit metadataChanged();
     emit keyframesChanged();
     emit markersChanged();
+    emit thumbnailsChanged();
 }
 
 void AppController::applyMetadata(const QJsonObject &metadata, const QJsonArray &keyframes)
@@ -847,13 +930,17 @@ bool AppController::ensureCanExport()
         setLogText("Choose an output file first.");
         return false;
     }
+    if (QFileInfo(m_outputPath).absoluteFilePath() == QFileInfo(m_sourcePath).absoluteFilePath()) {
+        setError("Output file must be different from the source file.");
+        return false;
+    }
     if (m_segments->rowCount() == 0) {
         setLogText("Add at least one segment before exporting.");
         return false;
     }
     const QJsonObject validated = RustBridge::validateSegments(m_segments->toJsonArray(), keyframesJson());
     if (!validated.value("ok").toBool()) {
-        setLogText(validated.value("error").toString());
+        setError(validated.value("error").toString());
         return false;
     }
     return true;
@@ -873,4 +960,99 @@ bool AppController::writeTextFile(const QString &path, const QString &contents)
         return false;
     }
     return true;
+}
+
+void AppController::setNotice(const QString &text, const QString &tone)
+{
+    const QString normalizedTone = text.isEmpty()
+        ? QString()
+        : (tone.isEmpty() ? QStringLiteral("info") : tone);
+    if (m_noticeText == text && m_noticeTone == normalizedTone) {
+        return;
+    }
+    m_noticeText = text;
+    m_noticeTone = normalizedTone;
+    emit noticeChanged();
+}
+
+void AppController::setError(const QString &text)
+{
+    setLogText(text);
+    setNotice(text, QStringLiteral("bad"));
+}
+
+void AppController::dismissNotice()
+{
+    setNotice(QString(), QString());
+}
+
+void AppController::setProbing(bool probing)
+{
+    if (m_probing == probing) {
+        return;
+    }
+    m_probing = probing;
+    emit probingChanged();
+}
+
+bool AppController::outputExists() const
+{
+    return !m_outputPath.isEmpty() && QFileInfo::exists(m_outputPath);
+}
+
+QString AppController::ensureThumbDir()
+{
+    if (m_thumbDirPath.isEmpty()) {
+        const QString path = QDir::temp().filePath(
+            QStringLiteral("seder-video-rewrap-thumbs-%1").arg(QCoreApplication::applicationPid()));
+        if (!QDir().mkpath(path)) {
+            return QString();
+        }
+        m_thumbDirPath = path;
+    }
+    return m_thumbDirPath;
+}
+
+// Render a single still frame for the IN/OUT marker so the UI can show what the
+// cut lands on. Runs ffmpeg on a worker thread; thumbnails are best-effort, so
+// failures are swallowed silently rather than surfaced as errors.
+void AppController::generateThumbnail(qint64 timeMs, bool isIn)
+{
+    if (m_sourcePath.isEmpty() || !m_ffmpegReady) {
+        return;
+    }
+    const QString dir = ensureThumbDir();
+    if (dir.isEmpty()) {
+        return;
+    }
+    const QString outPath = QDir(dir).filePath(
+        QStringLiteral("%1-%2.png")
+            .arg(isIn ? QStringLiteral("in") : QStringLiteral("out"))
+            .arg(timeMs));
+    const QJsonObject reply = RustBridge::ffmpegThumbnailCommand(m_sourcePath, timeMs, outPath);
+    if (!reply.value("ok").toBool()) {
+        return;
+    }
+    const RustBridge::Command command = RustBridge::commandFromJson(reply.value("command").toObject());
+    QThread *worker = QThread::create([this, command, outPath, isIn] {
+        const ProcessResult result = runCommand(command);
+        if (!result.ok) {
+            return;
+        }
+        QMetaObject::invokeMethod(this, [this, outPath, isIn] {
+            QString &fileRef = isIn ? m_inThumbFile : m_outThumbFile;
+            if (!fileRef.isEmpty() && fileRef != outPath) {
+                QFile::remove(fileRef);
+            }
+            fileRef = outPath;
+            if (isIn) {
+                m_inThumbUrl = QUrl::fromLocalFile(outPath);
+            } else {
+                m_outThumbUrl = QUrl::fromLocalFile(outPath);
+            }
+            emit thumbnailsChanged();
+        }, Qt::QueuedConnection);
+    });
+    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+    worker->start();
 }
