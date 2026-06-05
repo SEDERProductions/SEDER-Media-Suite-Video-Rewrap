@@ -157,7 +157,9 @@ function createMacBundle(executable, outputRoot) {
 </plist>
 `);
   const macdeployqt = ensureTool('macdeployqt', 'macdeployqt is required to package macOS Qt releases.');
-  execFileSync(macdeployqt, [bundle], { stdio: 'inherit' });
+  // -qmldir lets macdeployqt discover the QtMultimedia QML import used by the
+  // embedded video preview and bundle that QML module plus its plugins.
+  execFileSync(macdeployqt, [bundle, `-qmldir=${join(root, 'qt', 'qml')}`], { stdio: 'inherit' });
   execFileSync('codesign', [
     '--force', '--deep', '--options', 'runtime',
     '--identifier', app.bundleId,
@@ -312,6 +314,9 @@ Categories=AudioVideo;Video;
         cwd: outputRoot,
         env: {
           ...process.env,
+          // Point the Qt plugin at the QML sources so it deploys the QtMultimedia
+          // module (the app's own QML is compiled into the binary as a resource).
+          QML_SOURCES_PATHS: join(root, 'qt', 'qml'),
           OUTPUT: join(outputRoot, `${app.packageName}-v${version}-${info.platform}-${info.architecture}.AppImage`),
         },
         stdio: 'inherit',

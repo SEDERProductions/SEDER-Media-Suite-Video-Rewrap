@@ -51,6 +51,7 @@ jobs:
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.7.*'
+          modules: 'qtmultimedia'
           cache: true
 
       - name: Install npm dependencies
