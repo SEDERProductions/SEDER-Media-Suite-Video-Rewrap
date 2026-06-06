@@ -44,6 +44,16 @@ private slots:
         QCOMPARE(model.data(model.index(0, 1)).toString(), QString("A copy"));
     }
 
+    void moveDown_shiftsRowDownByOne()
+    {
+        SegmentTableModel model;
+        model.append(SegmentRow { "A", 0, 1000, "", true });
+        model.append(SegmentRow { "B", 1000, 2000, "", true });
+        model.moveDown(0);
+        QCOMPARE(model.data(model.index(0, 1)).toString(), QString("B"));
+        QCOMPARE(model.data(model.index(1, 1)).toString(), QString("A"));
+    }
+
     void loadsRowsFromJson()
     {
         SegmentTableModel model;

@@ -2,20 +2,26 @@
 
 SEDER Video Rewrap is a local-first desktop utility for building keyframe-aligned video segments and exporting them with FFmpeg stream copy. It is designed for post-production workflows where rewrapping should avoid re-encoding.
 
-[Download the latest release](https://github.com/SEDERProductions/SEDER-Media-Suite-Video-Rewrap/tags)
+[Download the latest release](https://github.com/SEDERProductions/SEDER-Media-Suite-Video-Rewrap/releases)
+&nbsp;·&nbsp;
+[User guide](docs/USER_GUIDE.md)
+&nbsp;·&nbsp;
+[Changelog](CHANGELOG.md)
 
 Builds are ad-hoc signed by SEDER Productions for tamper-detection. macOS may still ask you to right-click → Open the first time, and Windows SmartScreen will show a "More info → Run anyway" prompt — Apple notarization and a paid Windows Authenticode certificate are not configured. Linux builds ship as an AppImage when the release runner can produce one, otherwise as a ZIP.
 
 ## Features
 
-- Qt 6/QML desktop interface.
+- Qt 6/QML desktop interface with menu bar, drag-and-drop, full keyboard shortcuts, and accessibility labels.
 - Compiled Rust media core for timecode, keyframe, segment, project, and report logic.
 - FFprobe metadata and keyframe discovery.
 - Embedded video preview with an interactive keyframe timeline, draggable playhead, IN/OUT range, segment preview, and IN/OUT frame thumbnails.
 - External FFplay preview as a fallback for codecs the in-app player cannot decode.
-- Drag-and-drop to open, keyboard shortcuts, and an overwrite/identity guard before export.
-- FFmpeg stream-copy export with no re-encode fallback.
-- Project save/load plus TXT and CSV report export.
+- FFmpeg stream-copy export with no re-encode fallback. Refuses to start on FFmpeg < 4.0 instead of failing cryptically.
+- Project save/load with explicit schema versioning, plus TXT and CSV report export.
+- Undo / redo for every segment edit.
+- Recent files for source videos and projects, persisted between launches.
+- Optional in-app update banner driven by a self-hosted `latest.json` on the release page (opt-out per setting or `--no-update-check`).
 
 All processing is local. The app does not upload media files.
 

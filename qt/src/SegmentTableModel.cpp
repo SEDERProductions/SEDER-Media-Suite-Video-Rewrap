@@ -89,6 +89,11 @@ QHash<int, QByteArray> SegmentTableModel::roleNames() const
     };
 }
 
+void SegmentTableModel::invalidateJsonCache()
+{
+    m_jsonDirty = true;
+}
+
 void SegmentTableModel::clear()
 {
     if (m_segments.isEmpty()) {
@@ -97,6 +102,7 @@ void SegmentTableModel::clear()
     beginResetModel();
     m_segments.clear();
     endResetModel();
+    invalidateJsonCache();
 }
 
 void SegmentTableModel::remove(int row)
@@ -107,6 +113,7 @@ void SegmentTableModel::remove(int row)
     beginRemoveRows(QModelIndex(), row, row);
     m_segments.removeAt(row);
     endRemoveRows();
+    invalidateJsonCache();
 }
 
 void SegmentTableModel::duplicate(int row)
@@ -119,6 +126,7 @@ void SegmentTableModel::duplicate(int row)
     beginInsertRows(QModelIndex(), row + 1, row + 1);
     m_segments.insert(row + 1, copy);
     endInsertRows();
+    invalidateJsonCache();
 }
 
 void SegmentTableModel::moveUp(int row)
@@ -129,6 +137,7 @@ void SegmentTableModel::moveUp(int row)
     beginMoveRows(QModelIndex(), row, row, QModelIndex(), row - 1);
     m_segments.move(row, row - 1);
     endMoveRows();
+    invalidateJsonCache();
 }
 
 void SegmentTableModel::moveDown(int row)
@@ -139,6 +148,7 @@ void SegmentTableModel::moveDown(int row)
     beginMoveRows(QModelIndex(), row, row, QModelIndex(), row + 2);
     m_segments.move(row, row + 1);
     endMoveRows();
+    invalidateJsonCache();
 }
 
 void SegmentTableModel::setEnabled(int row, bool enabled)
@@ -150,6 +160,7 @@ void SegmentTableModel::setEnabled(int row, bool enabled)
     const QModelIndex first = index(row, 0);
     const QModelIndex last = index(row, columnCount() - 1);
     emit dataChanged(first, last, { Qt::DisplayRole, EnabledRole, DurationTextRole });
+    invalidateJsonCache();
 }
 
 void SegmentTableModel::append(const SegmentRow &segment)
@@ -158,6 +169,7 @@ void SegmentTableModel::append(const SegmentRow &segment)
     beginInsertRows(QModelIndex(), row, row);
     m_segments.push_back(segment);
     endInsertRows();
+    invalidateJsonCache();
 }
 
 void SegmentTableModel::setSegments(const QVector<SegmentRow> &segments)
@@ -165,6 +177,7 @@ void SegmentTableModel::setSegments(const QVector<SegmentRow> &segments)
     beginResetModel();
     m_segments = segments;
     endResetModel();
+    invalidateJsonCache();
 }
 
 QVector<SegmentRow> SegmentTableModel::segments() const
@@ -174,9 +187,12 @@ QVector<SegmentRow> SegmentTableModel::segments() const
 
 QJsonArray SegmentTableModel::toJsonArray() const
 {
-    QJsonArray array;
+    if (!m_jsonDirty) {
+        return m_cachedJson;
+    }
+    m_cachedJson = QJsonArray();
     for (const SegmentRow &segment : m_segments) {
-        array.push_back(QJsonObject {
+        m_cachedJson.push_back(QJsonObject {
             { "name", segment.name },
             { "in_ms", static_cast<double>(segment.inMs) },
             { "out_ms", static_cast<double>(segment.outMs) },
@@ -184,7 +200,8 @@ QJsonArray SegmentTableModel::toJsonArray() const
             { "enabled", segment.enabled },
         });
     }
-    return array;
+    m_jsonDirty = false;
+    return m_cachedJson;
 }
 
 void SegmentTableModel::fromJsonArray(const QJsonArray &array)

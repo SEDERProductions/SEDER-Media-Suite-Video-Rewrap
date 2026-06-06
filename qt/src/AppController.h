@@ -1,28 +1,43 @@
 #pragma once
 
+#include "ExportEngine.h"
+#include "ProbeEngine.h"
+#include "RecentFilesModel.h"
 #include "RustBridge.h"
+#include "SegmentCommands.h"
 #include "SegmentTableModel.h"
+#include "UpdateChecker.h"
 
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
+#include <QString>
+#include <QUndoStack>
 #include <QUrl>
 #include <QVariantList>
-#include <atomic>
+#include <QVector>
 #include <functional>
 
-class AppController : public QObject
+class AppController : public QObject, public SegmentCommandContext
 {
     Q_OBJECT
     Q_PROPERTY(SegmentTableModel *segmentModel READ segmentModel CONSTANT)
+    Q_PROPERTY(RecentFilesModel *recentSources READ recentSources CONSTANT)
+    Q_PROPERTY(RecentFilesModel *recentOutputs READ recentOutputs CONSTANT)
+    Q_PROPERTY(RecentFilesModel *recentProjects READ recentProjects CONSTANT)
+    Q_PROPERTY(UpdateChecker *updateChecker READ updateChecker CONSTANT)
     Q_PROPERTY(QString sourcePath READ sourcePath NOTIFY sourcePathChanged)
     Q_PROPERTY(QString outputPath READ outputPath NOTIFY outputPathChanged)
     Q_PROPERTY(QString logText READ logText NOTIFY logTextChanged)
+    Q_PROPERTY(QString lastErrorLog READ lastErrorLog NOTIFY lastErrorLogChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(double progress READ progress NOTIFY progressChanged)
     Q_PROPERTY(bool ffmpegReady READ ffmpegReady NOTIFY toolsChanged)
     Q_PROPERTY(bool ffprobeReady READ ffprobeReady NOTIFY toolsChanged)
     Q_PROPERTY(bool ffplayReady READ ffplayReady NOTIFY toolsChanged)
+    Q_PROPERTY(QString ffmpegVersionText READ ffmpegVersionText NOTIFY toolsChanged)
+    Q_PROPERTY(bool ffmpegCompatible READ ffmpegCompatible NOTIFY toolsChanged)
+    Q_PROPERTY(QString customFfmpegDir READ customFfmpegDir NOTIFY customFfmpegDirChanged)
     Q_PROPERTY(QString mediaFilename READ mediaFilename NOTIFY metadataChanged)
     Q_PROPERTY(QString durationText READ durationText NOTIFY metadataChanged)
     Q_PROPERTY(QString resolutionText READ resolutionText NOTIFY metadataChanged)
@@ -37,6 +52,10 @@ class AppController : public QObject
     Q_PROPERTY(int selectedRow READ selectedRow NOTIFY selectedRowChanged)
     Q_PROPERTY(QString theme READ theme WRITE setTheme NOTIFY themeChanged)
     Q_PROPERTY(bool darkMode READ darkMode NOTIFY themeChanged)
+    Q_PROPERTY(QString exportMode READ exportMode WRITE setExportMode NOTIFY exportModeChanged)
+    Q_PROPERTY(bool canUndo READ canUndo NOTIFY undoStackChanged)
+    Q_PROPERTY(bool canRedo READ canRedo NOTIFY undoStackChanged)
+    Q_PROPERTY(QString appVersion READ appVersion CONSTANT)
     Q_PROPERTY(QUrl videoUrl READ videoUrl NOTIFY sourcePathChanged)
     Q_PROPERTY(qint64 durationMs READ durationMs NOTIFY metadataChanged)
     Q_PROPERTY(QVariantList keyframesMs READ keyframesMs NOTIFY keyframesChanged)
@@ -53,14 +72,22 @@ public:
     explicit AppController(SegmentTableModel *segments, QObject *parent = nullptr);
 
     SegmentTableModel *segmentModel() const;
+    RecentFilesModel *recentSources() const { return m_recentSources; }
+    RecentFilesModel *recentOutputs() const { return m_recentOutputs; }
+    RecentFilesModel *recentProjects() const { return m_recentProjects; }
+    UpdateChecker *updateChecker() const { return m_updateChecker; }
     QString sourcePath() const;
     QString outputPath() const;
     QString logText() const;
+    QString lastErrorLog() const { return m_lastErrorLog; }
     bool busy() const;
     double progress() const;
     bool ffmpegReady() const;
     bool ffprobeReady() const;
     bool ffplayReady() const;
+    QString ffmpegVersionText() const { return m_ffmpegVersionText; }
+    bool ffmpegCompatible() const { return m_ffmpegCompatible; }
+    QString customFfmpegDir() const { return m_customFfmpegDir; }
     QString mediaFilename() const;
     QString durationText() const;
     QString resolutionText() const;
@@ -75,19 +102,25 @@ public:
     int selectedRow() const;
     QString theme() const;
     bool darkMode() const;
+    QString exportMode() const;
+    bool canUndo() const { return m_undo.canUndo(); }
+    bool canRedo() const { return m_undo.canRedo(); }
+    QString appVersion() const;
     QUrl videoUrl() const;
     qint64 durationMs() const;
     QVariantList keyframesMs() const;
-    qint64 currentKeyframeMs() const;
     qint64 inMs() const;
     qint64 outMs() const;
-    QUrl inThumbUrl() const;
-    QUrl outThumbUrl() const;
-    QString noticeText() const;
-    QString noticeTone() const;
-    bool probing() const;
+    QUrl inThumbUrl() const { return m_inThumbUrl; }
+    QUrl outThumbUrl() const { return m_outThumbUrl; }
+    QString noticeText() const { return m_noticeText; }
+    QString noticeTone() const { return m_noticeTone; }
+    bool probing() const { return m_probing; }
 
     Q_INVOKABLE void openSource();
+    Q_INVOKABLE void openSourcePath(const QString &path);
+    Q_INVOKABLE void openProjectPath(const QString &path);
+    Q_INVOKABLE void setOutputFromPath(const QString &path);
     Q_INVOKABLE void chooseOutput();
     Q_INVOKABLE void recheckTools();
     Q_INVOKABLE void saveProject();
@@ -95,6 +128,7 @@ public:
     Q_INVOKABLE void exportTxtReport();
     Q_INVOKABLE void exportCsvReport();
     Q_INVOKABLE void startExport();
+    Q_INVOKABLE void replaceFile();
     Q_INVOKABLE void cancelExport();
     Q_INVOKABLE void jumpToTimecode(const QString &timecode);
     Q_INVOKABLE void previousKeyframe();
@@ -110,54 +144,59 @@ public:
     Q_INVOKABLE void moveSegmentDown(int row);
     Q_INVOKABLE void toggleSegment(int row, bool enabled);
     Q_INVOKABLE void setTheme(const QString &theme);
+    Q_INVOKABLE void setExportMode(const QString &mode);
+    Q_INVOKABLE void undo();
+    Q_INVOKABLE void redo();
+    Q_INVOKABLE void handleDroppedFile(const QString &url);
+    Q_INVOKABLE void setCustomFfmpegDir(const QString &dir);
+    Q_INVOKABLE void clearCustomFfmpegDir();
+    Q_INVOKABLE void copyLastErrorLogToClipboard();
     Q_INVOKABLE qint64 snapToKeyframe(qint64 ms);
-    Q_INVOKABLE void openDroppedFile(const QUrl &url);
     Q_INVOKABLE void dismissNotice();
     Q_INVOKABLE bool outputExists() const;
+
+    bool ensureCanExportForTesting();
+    void setPathsForTesting(const QString &source, const QString &output);
+    void setToolsReadyForTesting(bool ffmpegReady, bool ffprobeReady);
+    void setOverwriteDecisionProviderForTesting(const std::function<bool(const QString &)> &provider);
+    bool overwriteApprovedForSessionForTesting() const;
+    void setKeyframesForTesting(const QVector<qint64> &keyframes);
+    QUndoStack *undoStackForTesting() { return &m_undo; }
+
+    void onSegmentsMutated() override;
 
 signals:
     void sourcePathChanged();
     void outputPathChanged();
     void logTextChanged();
+    void lastErrorLogChanged();
     void busyChanged();
     void progressChanged();
     void toolsChanged();
+    void customFfmpegDirChanged();
     void metadataChanged();
     void keyframesChanged();
     void markersChanged();
     void segmentsChanged();
     void selectedRowChanged();
     void themeChanged();
+    void exportModeChanged();
+    void undoStackChanged();
     void thumbnailsChanged();
     void noticeChanged();
     void probingChanged();
 
 private:
-    struct ProcessResult {
-        bool ok = false;
-        QString stdoutText;
-        QString stderrText;
-        int exitCode = -1;
-    };
-
     void setSourcePath(const QString &path);
     void setOutputPath(const QString &path);
     void setLogText(const QString &text);
-    void setBusy(bool busy);
-    void setProgress(double progress);
+    void setLastErrorLog(const QString &text);
     void setSelectedRowValue(int row);
-    void probeSource(const QString &path);
+    void updateTotalDuration();
     void clearMediaState();
     void applyMetadata(const QJsonObject &metadata, const QJsonArray &keyframes);
-    void updateTotalDuration();
-    static QString formatMs(qint64 milliseconds);
-    QString displayPath(const QString &path) const;
-    QString toolStatusText() const;
     QJsonArray keyframesJson() const;
-    static bool programExists(const QString &program);
-    static ProcessResult runCommand(const RustBridge::Command &command, std::atomic_bool *cancel = nullptr);
-    static QString bytesText(quint64 bytes);
-    bool ensureCanExport();
+    qint64 currentKeyframeMs() const;
     bool writeTextFile(const QString &path, const QString &contents);
     bool runExportFlow(const QString &dialogTitle,
         const QString &dialogFilter,
@@ -166,29 +205,35 @@ private:
         const QString &payloadKey,
         const QString &cancelLog,
         const QString &successLog);
-    void recheckToolsCached();
-    void recheckToolsBackground();
+    void refreshFfmpegVersion();
+    void applyCustomFfmpegDirToEnvironment();
     void setNotice(const QString &text, const QString &tone);
-    void setError(const QString &text);
     void setProbing(bool probing);
     void generateThumbnail(qint64 timeMs, bool isIn);
     QString ensureThumbDir();
 
+    ProbeEngine *m_probeEngine = nullptr;
+    ExportEngine *m_exportEngine = nullptr;
     SegmentTableModel *m_segments = nullptr;
+    RecentFilesModel *m_recentSources = nullptr;
+    RecentFilesModel *m_recentOutputs = nullptr;
+    RecentFilesModel *m_recentProjects = nullptr;
+    UpdateChecker *m_updateChecker = nullptr;
+    QUndoStack m_undo;
+
     QString m_sourcePath;
     QString m_outputPath;
     QString m_logText;
-    bool m_busy = false;
-    double m_progress = 0.0;
-    bool m_ffmpegReady = false;
-    bool m_ffprobeReady = false;
-    bool m_ffplayReady = false;
-    QString m_mediaFilename = "No source";
-    QString m_durationText = "N/A";
-    QString m_resolutionText = "N/A";
-    QString m_codecText = "N/A";
-    QString m_sizeText = "N/A";
-    QString m_mediaSummary = "Open a video to inspect stream-copy-safe keyframes.";
+    QString m_lastErrorLog;
+    QString m_mediaFilename = tr("No source");
+    QString m_durationText = tr("N/A");
+    QString m_resolutionText = tr("N/A");
+    QString m_codecText = tr("N/A");
+    QString m_sizeText = tr("N/A");
+    QString m_mediaSummary = tr("Open a video to inspect stream-copy-safe keyframes.");
+    QString m_ffmpegVersionText;
+    bool m_ffmpegCompatible = false;
+    QString m_customFfmpegDir;
     QJsonObject m_metadataJson;
     QVector<qint64> m_keyframes;
     int m_currentIndex = 0;
@@ -200,8 +245,7 @@ private:
     int m_selectedRow = -1;
     QString m_theme = "system";
     bool m_darkMode = true;
-    std::atomic_bool m_cancelExport = false;
-    qint64 m_lastToolCheckMs = 0;
+    QVector<qint64> m_previewPids;
     QString m_noticeText;
     QString m_noticeTone;
     bool m_probing = false;

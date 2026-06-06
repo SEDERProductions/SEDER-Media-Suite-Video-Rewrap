@@ -1,46 +1,162 @@
 #include "AppController.h"
 
-#include <QDateTime>
+#include "ProcessUtil.h"
+#include "RustBridge.h"
+
+#include <QClipboard>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QGuiApplication>
-#include <QJsonDocument>
+#include <QPointer>
 #include <QProcess>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QStyleHints>
 #include <QThread>
 #include <QUrl>
-#include <QVariant>
 #include <algorithm>
+
+namespace {
+constexpr auto kRecentSourcesKey = "recent/sources";
+constexpr auto kRecentOutputsKey = "recent/outputs";
+constexpr auto kRecentProjectsKey = "recent/projects";
+constexpr auto kCustomFfmpegDirKey = "ffmpeg/customDir";
+
+QString formatMs(qint64 milliseconds)
+{
+    const qint64 safe = std::max<qint64>(0, milliseconds);
+    const qint64 hours = safe / 3600000;
+    const qint64 minutes = (safe % 3600000) / 60000;
+    const qint64 seconds = (safe % 60000) / 1000;
+    const qint64 millis = safe % 1000;
+    return QStringLiteral("%1:%2:%3.%4")
+        .arg(hours, 2, 10, QLatin1Char('0'))
+        .arg(minutes, 2, 10, QLatin1Char('0'))
+        .arg(seconds, 2, 10, QLatin1Char('0'))
+        .arg(millis, 3, 10, QLatin1Char('0'));
+}
+
+QString bytesText(quint64 bytes)
+{
+    const char *units[] = { "B", "KB", "MB", "GB", "TB" };
+    double value = static_cast<double>(bytes);
+    int unit = 0;
+    while (value >= 1024.0 && unit < 4) {
+        value /= 1024.0;
+        ++unit;
+    }
+    if (unit == 0) {
+        return QStringLiteral("%1 B").arg(bytes);
+    }
+    return QStringLiteral("%1 %2").arg(value, 0, 'f', 1).arg(units[unit]);
+}
+
+void killPreviewPids(QVector<qint64> &pids)
+{
+    for (const qint64 pid : pids) {
+#if defined(Q_OS_WIN)
+        QProcess::execute("taskkill", { "/PID", QString::number(pid), "/F" });
+#else
+        QProcess::execute("kill", { QString::number(pid) });
+#endif
+    }
+    pids.clear();
+}
+
+bool looksLikeProjectFile(const QString &path)
+{
+    const QFileInfo info(path);
+    if (info.suffix().compare("json", Qt::CaseInsensitive) == 0) {
+        const QString name = info.fileName();
+        return name.contains(".seder-rewrap", Qt::CaseInsensitive)
+            || name.contains("project", Qt::CaseInsensitive);
+    }
+    return false;
+}
+
+QString urlOrPathToLocal(const QString &value)
+{
+    if (value.isEmpty()) return value;
+    if (value.startsWith("file:")) {
+        return QUrl(value).toLocalFile();
+    }
+    return value;
+}
+}
 
 AppController::AppController(SegmentTableModel *segments, QObject *parent)
     : QObject(parent)
     , m_segments(segments)
+    , m_recentSources(new RecentFilesModel(kRecentSourcesKey, this))
+    , m_recentOutputs(new RecentFilesModel(kRecentOutputsKey, this))
+    , m_recentProjects(new RecentFilesModel(kRecentProjectsKey, this))
+    , m_updateChecker(new UpdateChecker(this))
 {
-    QSettings settings;
-    m_theme = settings.value("theme", "system").toString();
-    setTheme(m_theme);
-    connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this, [this] {
-        if (m_theme == "system") {
-            setTheme("system");
+    m_probeEngine = new ProbeEngine(this);
+    m_exportEngine = new ExportEngine(this);
+
+    connect(m_probeEngine, &ProbeEngine::toolsChanged, this, [this] {
+        refreshFfmpegVersion();
+        emit toolsChanged();
+    });
+    connect(m_probeEngine, &ProbeEngine::logMessage, this, &AppController::setLogText);
+    connect(m_probeEngine, &ProbeEngine::probeComplete, this, [this](bool ok, QJsonObject metadata, QJsonArray keyframes, QString error) {
+        setProbing(false);
+        if (ok) {
+            applyMetadata(metadata, keyframes);
+            setNotice(QString(), QString());
+            setLogText(tr("Detected %1 keyframes.").arg(m_keyframes.size()));
+        } else {
+            setLastErrorLog(error);
+            setNotice(error, QStringLiteral("bad"));
+            setLogText(error);
         }
     });
-    recheckToolsBackground();
+
+    connect(m_exportEngine, &ExportEngine::busyChanged, this, [this] {
+        emit busyChanged();
+    });
+    connect(m_exportEngine, &ExportEngine::progressChanged, this, [this] {
+        emit progressChanged();
+    });
+    connect(m_exportEngine, &ExportEngine::exportModeChanged, this, [this] {
+        emit exportModeChanged();
+    });
+    connect(m_exportEngine, &ExportEngine::logMessage, this, &AppController::setLogText);
+    connect(m_exportEngine, &ExportEngine::errorReport, this, &AppController::setLastErrorLog);
+
+    connect(&m_undo, &QUndoStack::canUndoChanged, this, [this] { emit undoStackChanged(); });
+    connect(&m_undo, &QUndoStack::canRedoChanged, this, [this] { emit undoStackChanged(); });
+
+    QSettings settings;
+    m_theme = settings.value("theme", "system").toString();
+    m_customFfmpegDir = settings.value(kCustomFfmpegDirKey).toString();
+    applyCustomFfmpegDirToEnvironment();
+    setTheme(m_theme);
+    m_probeEngine->recheckBackground();
+
+    if (m_updateChecker->checkOnLaunch() && qEnvironmentVariableIsEmpty("SEDER_DISABLE_UPDATE_CHECK")) {
+        m_updateChecker->checkNow();
+    }
+
+    connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, [this] {
+        killPreviewPids(m_previewPids);
+    });
 }
 
 SegmentTableModel *AppController::segmentModel() const { return m_segments; }
 QString AppController::sourcePath() const { return m_sourcePath; }
 QString AppController::outputPath() const { return m_outputPath; }
 QString AppController::logText() const { return m_logText; }
-bool AppController::busy() const { return m_busy; }
-double AppController::progress() const { return m_progress; }
-bool AppController::ffmpegReady() const { return m_ffmpegReady; }
-bool AppController::ffprobeReady() const { return m_ffprobeReady; }
-bool AppController::ffplayReady() const { return m_ffplayReady; }
+bool AppController::busy() const { return m_exportEngine->busy(); }
+double AppController::progress() const { return m_exportEngine->progress(); }
+bool AppController::ffmpegReady() const { return m_probeEngine->ffmpegReady(); }
+bool AppController::ffprobeReady() const { return m_probeEngine->ffprobeReady(); }
+bool AppController::ffplayReady() const { return m_probeEngine->ffplayReady(); }
 QString AppController::mediaFilename() const { return m_mediaFilename; }
 QString AppController::durationText() const { return m_durationText; }
 QString AppController::resolutionText() const { return m_resolutionText; }
@@ -55,6 +171,8 @@ QString AppController::totalDurationText() const { return m_totalDurationText; }
 int AppController::selectedRow() const { return m_selectedRow; }
 QString AppController::theme() const { return m_theme; }
 bool AppController::darkMode() const { return m_darkMode; }
+QString AppController::exportMode() const { return m_exportEngine->exportMode(); }
+QString AppController::appVersion() const { return QCoreApplication::applicationVersion(); }
 
 QUrl AppController::videoUrl() const
 {
@@ -69,21 +187,21 @@ qint64 AppController::durationMs() const
 
 QVariantList AppController::keyframesMs() const
 {
-    // Cap displayed markers to avoid creating thousands of QML items for
-    // all-intra sources (ProRes, DNxHR). Evenly subsample when over the limit.
+    // Cap the markers handed to the QML timeline so dense keyframe sets stay
+    // cheap to render; subsample evenly when above the cap.
     constexpr int kMaxMarkers = 500;
+    const int count = m_keyframes.size();
     QVariantList list;
-    const int n = m_keyframes.size();
-    if (n <= kMaxMarkers) {
-        list.reserve(n);
-        for (qint64 ms : m_keyframes) {
-            list.push_back(QVariant::fromValue(ms));
+    if (count <= kMaxMarkers) {
+        list.reserve(count);
+        for (const qint64 keyframe : m_keyframes) {
+            list.push_back(QVariant::fromValue(keyframe));
         }
     } else {
         list.reserve(kMaxMarkers);
         for (int i = 0; i < kMaxMarkers; ++i) {
-            const int idx = static_cast<int>(static_cast<qint64>(i) * (n - 1) / (kMaxMarkers - 1));
-            list.push_back(QVariant::fromValue(m_keyframes[idx]));
+            const int index = static_cast<int>(static_cast<qint64>(i) * (count - 1) / (kMaxMarkers - 1));
+            list.push_back(QVariant::fromValue(m_keyframes.at(index)));
         }
     }
     return list;
@@ -91,44 +209,73 @@ QVariantList AppController::keyframesMs() const
 
 qint64 AppController::inMs() const { return m_hasPendingIn ? m_pendingIn : -1; }
 qint64 AppController::outMs() const { return m_hasPendingOut ? m_pendingOut : -1; }
-QUrl AppController::inThumbUrl() const { return m_inThumbUrl; }
-QUrl AppController::outThumbUrl() const { return m_outThumbUrl; }
-QString AppController::noticeText() const { return m_noticeText; }
-QString AppController::noticeTone() const { return m_noticeTone; }
-bool AppController::probing() const { return m_probing; }
 
 void AppController::openSource()
 {
-    if (m_busy) {
-        setLogText("Another operation is already running.");
+    if (m_exportEngine->busy()) {
+        setLogText(tr("Another operation is already running."));
         return;
     }
     const QString path = QFileDialog::getOpenFileName(
         nullptr,
-        "Open Video",
+        tr("Open Video"),
         QString(),
-        "Video Files (*.mov *.mp4 *.mkv *.m4v);;All Files (*)");
+        tr("Video Files (*.mov *.mp4 *.mkv *.m4v);;All Files (*)"));
     if (path.isEmpty()) {
-        setLogText("Open video cancelled.");
+        setLogText(tr("Open video cancelled."));
         return;
     }
-    setSourcePath(path);
-    probeSource(path);
+    openSourcePath(path);
 }
 
-void AppController::openDroppedFile(const QUrl &url)
+void AppController::openSourcePath(const QString &path)
 {
-    if (m_busy) {
-        setNotice("Another operation is already running.", "warn");
-        return;
-    }
-    const QString path = url.toLocalFile();
-    if (path.isEmpty()) {
-        setError("Could not open the dropped item. Drop a local video file.");
-        return;
-    }
+    if (path.isEmpty()) return;
     setSourcePath(path);
-    probeSource(path);
+    m_recentSources->prepend(path);
+    clearMediaState();
+    if (m_probeEngine->ffprobeReady()) {
+        setProbing(true);
+    }
+    m_probeEngine->probeSource(path);
+}
+
+void AppController::openProjectPath(const QString &path)
+{
+    if (path.isEmpty()) return;
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        setLogText(tr("Unable to read project: %1").arg(file.errorString()));
+        return;
+    }
+    const QJsonObject reply = RustBridge::parseProjectJson(QString::fromUtf8(file.readAll()));
+    if (!reply.value("ok").toBool()) {
+        const QString error = reply.value("error").toString();
+        setLastErrorLog(error);
+        setLogText(error);
+        return;
+    }
+
+    const QJsonObject project = reply.value("project").toObject();
+    m_undo.clear();
+    setOutputPath(project.value("output_file").toString());
+    m_segments->fromJsonArray(project.value("segments").toArray());
+    updateTotalDuration();
+    emit segmentsChanged();
+
+    const QString source = project.value("source_file").toString();
+    if (!source.isEmpty()) {
+        openSourcePath(source);
+    }
+    m_recentProjects->prepend(path);
+    setLogText(tr("Project loaded: %1").arg(QDir::toNativeSeparators(path)));
+}
+
+void AppController::setOutputFromPath(const QString &path)
+{
+    if (path.isEmpty()) return;
+    setOutputPath(path);
+    m_recentOutputs->prepend(path);
 }
 
 void AppController::chooseOutput()
@@ -138,74 +285,36 @@ void AppController::chooseOutput()
         : QFileInfo(m_sourcePath).completeBaseName() + QStringLiteral("-rewrapped.mov");
     const QString path = QFileDialog::getSaveFileName(
         nullptr,
-        "Output File",
+        tr("Output File"),
         suggested,
-        "QuickTime Movie (*.mov);;MP4 Video (*.mp4);;Matroska Video (*.mkv);;All Files (*)");
+        tr("QuickTime Movie (*.mov);;MP4 Video (*.mp4);;Matroska Video (*.mkv);;All Files (*)"));
     if (path.isEmpty()) {
-        setLogText("Output selection cancelled.");
+        setLogText(tr("Output selection cancelled."));
         return;
     }
-    setOutputPath(path);
+    setOutputFromPath(path);
 }
 
 void AppController::recheckTools()
 {
-    m_ffmpegReady = programExists("ffmpeg");
-    m_ffprobeReady = programExists("ffprobe");
-    m_ffplayReady = programExists("ffplay");
-    m_lastToolCheckMs = QDateTime::currentMSecsSinceEpoch();
-    emit toolsChanged();
-}
-
-// programExists() runs three blocking QProcess "-version" probes that can stack
-// to multiple seconds in pathological PATH/AV/Gatekeeper scenarios. The probes
-// run on the GUI thread (these are QML slot entry points), so a freshly-cached
-// result is reused for repeat clicks within a short window to avoid stacking.
-void AppController::recheckToolsCached()
-{
-    constexpr qint64 kToolCacheTtlMs = 5'000;
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (m_lastToolCheckMs != 0 && now - m_lastToolCheckMs < kToolCacheTtlMs) {
-        return;
-    }
-    recheckTools();
-}
-
-void AppController::recheckToolsBackground()
-{
-    QThread *worker = QThread::create([this] {
-        const bool ffmpegOk = programExists("ffmpeg");
-        const bool ffprobeOk = programExists("ffprobe");
-        const bool ffplayOk = programExists("ffplay");
-        const qint64 timestamp = QDateTime::currentMSecsSinceEpoch();
-        QMetaObject::invokeMethod(this, [this, ffmpegOk, ffprobeOk, ffplayOk, timestamp] {
-            m_ffmpegReady = ffmpegOk;
-            m_ffprobeReady = ffprobeOk;
-            m_ffplayReady = ffplayOk;
-            m_lastToolCheckMs = timestamp;
-            emit toolsChanged();
-            setLogText(toolStatusText());
-            if (!ffmpegOk || !ffprobeOk) {
-                setNotice(toolStatusText(), "bad");
-            } else if (!ffplayOk) {
-                setNotice(toolStatusText(), "warn");
-            }
-        }, Qt::QueuedConnection);
-    });
-    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-    worker->start();
+    m_probeEngine->recheckTools();
+    refreshFfmpegVersion();
+    setLogText(tr("FFmpeg: %1, FFprobe: %2, FFplay: %3")
+        .arg(m_probeEngine->ffmpegReady() ? tr("yes") : tr("no"))
+        .arg(m_probeEngine->ffprobeReady() ? tr("yes") : tr("no"))
+        .arg(m_probeEngine->ffplayReady() ? tr("yes") : tr("no")));
 }
 
 void AppController::saveProject()
 {
     runExportFlow(
-        "Save Rewrap Project",
-        "SEDER Rewrap Project (*.json);;All Files (*)",
+        tr("Save Rewrap Project"),
+        tr("SEDER Rewrap Project (*.json);;All Files (*)"),
         "video-rewrap.seder-rewrap.json",
         [this] { return RustBridge::projectJson(m_sourcePath, m_outputPath, m_segments->toJsonArray()); },
         "projectJson",
-        "Project save cancelled.",
-        "Project saved");
+        tr("Project save cancelled."),
+        tr("Project saved"));
 }
 
 bool AppController::runExportFlow(
@@ -229,7 +338,9 @@ bool AppController::runExportFlow(
 
     const QJsonObject reply = bridgeCall();
     if (!reply.value("ok").toBool()) {
-        setLogText(reply.value("error").toString());
+        const QString error = reply.value("error").toString();
+        setLastErrorLog(error);
+        setLogText(error);
         return false;
     }
 
@@ -237,7 +348,10 @@ bool AppController::runExportFlow(
         return false;
     }
 
-    setLogText(QStringLiteral("%1: %2").arg(successLog, displayPath(path)));
+    if (payloadKey == QLatin1String("projectJson")) {
+        m_recentProjects->prepend(path);
+    }
+    setLogText(QStringLiteral("%1: %2").arg(successLog, QDir::toNativeSeparators(path)));
     return true;
 }
 
@@ -245,177 +359,135 @@ void AppController::loadProject()
 {
     const QString path = QFileDialog::getOpenFileName(
         nullptr,
-        "Load Rewrap Project",
+        tr("Load Rewrap Project"),
         QString(),
-        "SEDER Rewrap Project (*.json);;All Files (*)");
+        tr("SEDER Rewrap Project (*.json);;All Files (*)"));
     if (path.isEmpty()) {
-        setLogText("Project load cancelled.");
+        setLogText(tr("Project load cancelled."));
         return;
     }
-
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        setLogText(QStringLiteral("Unable to read project: %1").arg(file.errorString()));
-        return;
-    }
-
-    const QJsonObject reply = RustBridge::parseProjectJson(QString::fromUtf8(file.readAll()));
-    if (!reply.value("ok").toBool()) {
-        setLogText(reply.value("error").toString());
-        return;
-    }
-
-    const QJsonObject project = reply.value("project").toObject();
-    setOutputPath(project.value("output_file").toString());
-    m_segments->fromJsonArray(project.value("segments").toArray());
-    updateTotalDuration();
-    emit segmentsChanged();
-
-    const QString source = project.value("source_file").toString();
-    if (!source.isEmpty()) {
-        setSourcePath(source);
-        probeSource(source);
-    }
-    setLogText(QStringLiteral("Project loaded: %1").arg(displayPath(path)));
+    openProjectPath(path);
 }
 
 void AppController::exportTxtReport()
 {
     runExportFlow(
-        "Export TXT Report",
-        "Text Report (*.txt);;All Files (*)",
+        tr("Export TXT Report"),
+        tr("Text Report (*.txt);;All Files (*)"),
         "video-rewrap-report.txt",
-        [this] { return RustBridge::rewrapReportTxt(m_sourcePath, m_outputPath, m_segments->toJsonArray()); },
+        [this] { return RustBridge::rewrapReportTxt(m_sourcePath, m_outputPath, m_segments->toJsonArray(), m_exportEngine->exportMode()); },
         "report",
-        "TXT report export cancelled.",
-        "TXT report exported");
+        tr("TXT report export cancelled."),
+        tr("TXT report exported"));
 }
 
 void AppController::exportCsvReport()
 {
     runExportFlow(
-        "Export CSV Report",
-        "CSV Report (*.csv);;All Files (*)",
+        tr("Export CSV Report"),
+        tr("CSV Report (*.csv);;All Files (*)"),
         "video-rewrap-report.csv",
-        [this] { return RustBridge::rewrapReportCsv(m_sourcePath, m_outputPath, m_segments->toJsonArray()); },
+        [this] { return RustBridge::rewrapReportCsv(m_sourcePath, m_outputPath, m_segments->toJsonArray(), m_exportEngine->exportMode()); },
         "report",
-        "CSV report export cancelled.",
-        "CSV report exported");
+        tr("CSV report export cancelled."),
+        tr("CSV report exported"));
 }
 
 void AppController::startExport()
 {
-    if (!ensureCanExport()) {
+    m_exportEngine->resetOverwriteSession();
+    if (!m_exportEngine->ensureCanExport(
+            m_probeEngine->ffmpegReady(),
+            m_probeEngine->ffprobeReady(),
+            m_sourcePath,
+            m_outputPath,
+            m_segments,
+            keyframesJson(),
+            m_exportEngine->busy())) {
         return;
     }
-
-    const QJsonObject preflight = RustBridge::rewrapPreflight(m_metadataJson, m_outputPath, m_segments->toJsonArray(), keyframesJson());
-    if (!preflight.value("ok").toBool()) {
-        setError(preflight.value("error").toString());
+    if (!m_ffmpegCompatible) {
+        setLogText(m_ffmpegVersionText.isEmpty()
+            ? tr("FFmpeg version check failed. Resolve before exporting.")
+            : m_ffmpegVersionText);
         return;
     }
-    setLogText("Preflight passed. No re-encode fallback is available; stream-copy export will proceed.");
-
-    const QString tempRoot = QDir::temp().filePath(QStringLiteral("seder-video-rewrap-%1-%2")
-        .arg(QCoreApplication::applicationPid())
-        .arg(QDateTime::currentMSecsSinceEpoch()));
-    const QJsonObject plan = RustBridge::exportPlan(
+    m_exportEngine->startExport(
         m_sourcePath,
         m_outputPath,
-        tempRoot,
-        m_segments->toJsonArray(),
-        keyframesJson());
-    if (!plan.value("ok").toBool()) {
-        setError(plan.value("error").toString());
-        return;
-    }
-
-    m_cancelExport = false;
-    setBusy(true);
-    setProgress(0.05);
-    setLogText("Exporting with FFmpeg stream copy only...");
-
-    QThread *worker = QThread::create([this, tempRoot, plan] {
-        QDir().mkpath(tempRoot);
-        const QJsonArray plannedSegments = plan.value("segments").toArray();
-        for (int i = 0; i < plannedSegments.size(); ++i) {
-            if (m_cancelExport) {
-                QDir(tempRoot).removeRecursively();
-                QMetaObject::invokeMethod(this, [this] {
-                    setBusy(false);
-                    setProgress(0.0);
-                    setLogText("Export cancelled.");
-                }, Qt::QueuedConnection);
-                return;
-            }
-            const QJsonObject item = plannedSegments.at(i).toObject();
-            const QString path = item.value("path").toString();
-            const RustBridge::Command command = RustBridge::commandFromJson(item.value("command").toObject());
-            QMetaObject::invokeMethod(this, [this, i, plannedSegments] {
-                setProgress(static_cast<double>(i) / static_cast<double>(plannedSegments.size() + 1));
-                setLogText(QStringLiteral("Exporting segment %1 of %2...")
-                    .arg(i + 1)
-                    .arg(plannedSegments.size()));
-            }, Qt::QueuedConnection);
-            const ProcessResult result = runCommand(command, &m_cancelExport);
-            if (!result.ok) {
-                QDir(tempRoot).removeRecursively();
-                QMetaObject::invokeMethod(this, [this, path, result] {
-                    setBusy(false);
-                    setProgress(0.0);
-                    setError(QStringLiteral("Segment export failed for %1\n%2")
-                        .arg(displayPath(path), result.stderrText));
-                }, Qt::QueuedConnection);
-                return;
-            }
-        }
-
-        QFile listFile(plan.value("listPath").toString());
-        if (!listFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            const QString error = listFile.errorString();
-            QDir(tempRoot).removeRecursively();
-            QMetaObject::invokeMethod(this, [this, error] {
-                setBusy(false);
-                setProgress(0.0);
-                setError(QStringLiteral("Unable to write concat list: %1").arg(error));
-            }, Qt::QueuedConnection);
-            return;
-        }
-        listFile.write(plan.value("listText").toString().toUtf8());
-        listFile.close();
-
-        QMetaObject::invokeMethod(this, [this] {
-            setProgress(0.9);
-            setLogText("Concatenating enabled segments...");
-        }, Qt::QueuedConnection);
-        const RustBridge::Command concat = RustBridge::commandFromJson(plan.value("concatCommand").toObject());
-        const ProcessResult result = runCommand(concat, &m_cancelExport);
-        QDir(tempRoot).removeRecursively();
-
-        QMetaObject::invokeMethod(this, [this, result] {
-            setBusy(false);
-            if (result.ok) {
-                setProgress(1.0);
-                dismissNotice();
-                setLogText(QStringLiteral("Export complete: %1").arg(displayPath(m_outputPath)));
-            } else {
-                setProgress(0.0);
-                setError(QStringLiteral("Export failed. No re-encode fallback was attempted.\n%1")
-                    .arg(result.stderrText));
-            }
-        }, Qt::QueuedConnection);
-    });
-    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-    worker->start();
+        m_metadataJson,
+        m_segments,
+        keyframesJson(),
+        m_exportEngine->overwriteApprovedForSession());
 }
 
 void AppController::cancelExport()
 {
-    if (!m_busy) {
+    m_exportEngine->cancel();
+}
+
+void AppController::replaceFile()
+{
+    if (m_exportEngine->busy()) {
+        setLogText(tr("Another operation is already running."));
         return;
     }
-    m_cancelExport = true;
-    setLogText("Cancelling export...");
+    m_probeEngine->recheckCached();
+    if (!ffmpegReady() || !ffprobeReady()) {
+        setLogText(tr("FFmpeg and/or FFprobe are missing."));
+        return;
+    }
+    if (m_sourcePath.isEmpty()) {
+        setLogText(tr("Choose a source video first."));
+        return;
+    }
+
+    const QFileInfo sourceInfo(m_sourcePath);
+    if (!sourceInfo.exists()) {
+        setLogText(tr("Source file no longer exists."));
+        return;
+    }
+
+    const QString dir = sourceInfo.absolutePath();
+    const QString baseName = sourceInfo.completeBaseName();
+    const QString ext = sourceInfo.suffix();
+    const QString backupPath = ext.isEmpty()
+        ? QStringLiteral("%1/%2_PREWRAP").arg(dir, baseName)
+        : QStringLiteral("%1/%2_PREWRAP.%3").arg(dir, baseName, ext);
+
+    if (QFileInfo::exists(backupPath)) {
+        setLogText(tr("Cannot replace: _PREWRAP backup already exists at %1. Remove it first or rename the source.")
+            .arg(QDir::toNativeSeparators(backupPath)));
+        return;
+    }
+
+    QFile file(m_sourcePath);
+    if (!file.rename(backupPath)) {
+        setLogText(tr("Unable to rename source to backup: %1").arg(file.errorString()));
+        return;
+    }
+
+    const QString originalSource = m_sourcePath;
+    m_sourcePath = backupPath;
+    m_outputPath = originalSource;
+    emit sourcePathChanged();
+    emit outputPathChanged();
+    setLogText(tr("Original backed up to %1. Output set to original path %2. Exporting...")
+        .arg(QDir::toNativeSeparators(backupPath), QDir::toNativeSeparators(originalSource)));
+
+    m_exportEngine->resetOverwriteSession();
+    m_exportEngine->startExport(
+        backupPath,
+        originalSource,
+        m_metadataJson,
+        m_segments,
+        keyframesJson(),
+        true);
+}
+
+void AppController::setExportMode(const QString &mode)
+{
+    m_exportEngine->setExportMode(mode);
 }
 
 void AppController::jumpToTimecode(const QString &timecode)
@@ -438,30 +510,9 @@ void AppController::jumpToTimecode(const QString &timecode)
         emit keyframesChanged();
     }
     const qint64 distance = static_cast<qint64>(snap.value("snap").toObject().value("distance_ms").toDouble());
-    setLogText(QStringLiteral("Requested %1 snapped to %2. Distance: %3 ms.")
+    setLogText(tr("Requested %1 snapped to %2. Distance: %3 ms.")
         .arg(formatMs(requested), formatMs(snapped))
         .arg(distance));
-}
-
-qint64 AppController::snapToKeyframe(qint64 ms)
-{
-    if (m_keyframes.isEmpty()) {
-        return 0;
-    }
-    const QJsonObject snap = RustBridge::nearestKeyframe(keyframesJson(), ms);
-    if (!snap.value("ok").toBool()) {
-        return currentKeyframeMs();
-    }
-    const qint64 snapped = static_cast<qint64>(snap.value("snap").toObject().value("snapped_ms").toDouble());
-    const auto it = std::lower_bound(m_keyframes.begin(), m_keyframes.end(), snapped);
-    if (it != m_keyframes.end() && *it == snapped) {
-        const int index = static_cast<int>(std::distance(m_keyframes.begin(), it));
-        if (index != m_currentIndex) {
-            m_currentIndex = index;
-            emit keyframesChanged();
-        }
-    }
-    return snapped;
 }
 
 void AppController::previousKeyframe()
@@ -482,32 +533,39 @@ void AppController::nextKeyframe()
 
 void AppController::previewCurrent()
 {
-    recheckToolsCached();
-    if (!m_ffplayReady) {
-        setError(toolStatusText());
+    m_probeEngine->recheckCached();
+    if (!ffplayReady()) {
+        setLogText(tr("FFplay is not available. Install FFmpeg to enable preview."));
         return;
     }
     if (m_sourcePath.isEmpty() || m_keyframes.isEmpty()) {
-        setLogText("Choose and probe a source video first.");
+        setLogText(tr("Choose and probe a source video first."));
         return;
     }
     const QJsonObject reply = RustBridge::ffplayPreviewCommand(m_sourcePath, currentKeyframeMs());
     if (!reply.value("ok").toBool()) {
-        setError(reply.value("error").toString());
+        setLogText(reply.value("error").toString());
         return;
     }
     const RustBridge::Command command = RustBridge::commandFromJson(reply.value("command").toObject());
-    if (QProcess::startDetached(command.program, command.args)) {
-        setLogText("Preview opened in FFplay.");
+
+    killPreviewPids(m_previewPids);
+
+    qint64 pid = 0;
+    if (QProcess::startDetached(command.program, command.args, QString(), &pid)) {
+        if (pid > 0) {
+            m_previewPids.push_back(pid);
+        }
+        setLogText(tr("Preview opened in FFplay."));
     } else {
-        setError("Unable to open FFplay.");
+        setLogText(tr("Unable to open FFplay."));
     }
 }
 
 void AppController::setIn()
 {
     if (m_keyframes.isEmpty()) {
-        setLogText("Probe a video before setting an in point.");
+        setLogText(tr("Probe a video before setting an in point."));
         return;
     }
     m_pendingIn = currentKeyframeMs();
@@ -519,7 +577,7 @@ void AppController::setIn()
 void AppController::setOut()
 {
     if (m_keyframes.isEmpty()) {
-        setLogText("Probe a video before setting an out point.");
+        setLogText(tr("Probe a video before setting an out point."));
         return;
     }
     m_pendingOut = currentKeyframeMs();
@@ -531,11 +589,11 @@ void AppController::setOut()
 void AppController::addSegment(const QString &name, const QString &notes)
 {
     if (!m_hasPendingIn || !m_hasPendingOut) {
-        setLogText("Set both in and out keyframes first.");
+        setLogText(tr("Set both in and out keyframes first."));
         return;
     }
     const QString segmentName = name.trimmed().isEmpty()
-        ? QStringLiteral("Segment %1").arg(m_segments->rowCount() + 1)
+        ? tr("Segment %1").arg(m_segments->rowCount() + 1)
         : name.trimmed();
     SegmentRow segment { segmentName, m_pendingIn, m_pendingOut, notes, true };
     QJsonArray candidate = m_segments->toJsonArray();
@@ -551,10 +609,8 @@ void AppController::addSegment(const QString &name, const QString &notes)
         setLogText(validated.value("error").toString());
         return;
     }
-    m_segments->append(segment);
-    updateTotalDuration();
-    emit segmentsChanged();
-    setLogText("Segment added.");
+    m_undo.push(new AddSegmentCommand(m_segments, this, segment));
+    setLogText(tr("Segment added."));
 }
 
 void AppController::selectSegment(int row)
@@ -564,61 +620,49 @@ void AppController::selectSegment(int row)
 
 void AppController::removeSegment(int row)
 {
-    m_segments->remove(row);
+    if (row < 0 || row >= m_segments->rowCount()) return;
+    m_undo.push(new RemoveSegmentCommand(m_segments, this, row));
     if (m_selectedRow == row) {
         setSelectedRowValue(-1);
     } else if (m_selectedRow > row) {
         setSelectedRowValue(m_selectedRow - 1);
     }
-    updateTotalDuration();
-    emit segmentsChanged();
 }
 
 void AppController::duplicateSegment(int row)
 {
-    m_segments->duplicate(row);
-    updateTotalDuration();
-    emit segmentsChanged();
+    if (row < 0 || row >= m_segments->rowCount()) return;
+    m_undo.push(new DuplicateSegmentCommand(m_segments, this, row));
 }
 
 void AppController::moveSegmentUp(int row)
 {
-    if (row <= 0) {
-        return;
-    }
-    m_segments->moveUp(row);
+    if (row <= 0) return;
+    m_undo.push(new MoveSegmentCommand(m_segments, this, row, row - 1));
     if (m_selectedRow == row) {
         setSelectedRowValue(row - 1);
     }
-    updateTotalDuration();
-    emit segmentsChanged();
 }
 
 void AppController::moveSegmentDown(int row)
 {
-    if (row < 0 || row + 1 >= m_segments->rowCount()) {
-        return;
-    }
-    m_segments->moveDown(row);
+    if (row < 0 || row + 1 >= m_segments->rowCount()) return;
+    m_undo.push(new MoveSegmentCommand(m_segments, this, row, row + 1));
     if (m_selectedRow == row) {
         setSelectedRowValue(row + 1);
     }
-    updateTotalDuration();
-    emit segmentsChanged();
 }
 
 void AppController::toggleSegment(int row, bool enabled)
 {
-    m_segments->setEnabled(row, enabled);
-    updateTotalDuration();
-    emit segmentsChanged();
+    if (row < 0 || row >= m_segments->rowCount()) return;
+    m_undo.push(new ToggleSegmentCommand(m_segments, this, row, enabled));
 }
 
 void AppController::setTheme(const QString &theme)
 {
     const QString normalized = (theme == "light" || theme == "dark") ? theme : QStringLiteral("system");
-    const bool dark = normalized == "dark"
-        || (normalized == "system" && QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark);
+    const bool dark = normalized == "dark";
     const bool changed = normalized != m_theme || dark != m_darkMode;
     m_theme = normalized;
     m_darkMode = dark;
@@ -628,139 +672,116 @@ void AppController::setTheme(const QString &theme)
     }
 }
 
-void AppController::setSourcePath(const QString &path)
+void AppController::undo()
 {
-    if (m_sourcePath == path) {
+    if (m_undo.canUndo()) m_undo.undo();
+}
+
+void AppController::redo()
+{
+    if (m_undo.canRedo()) m_undo.redo();
+}
+
+void AppController::handleDroppedFile(const QString &url)
+{
+    const QString path = urlOrPathToLocal(url);
+    if (path.isEmpty() || !QFileInfo::exists(path)) {
+        setLogText(tr("Dropped file does not exist: %1").arg(path));
         return;
     }
+    if (looksLikeProjectFile(path)) {
+        openProjectPath(path);
+    } else {
+        openSourcePath(path);
+    }
+}
+
+void AppController::setCustomFfmpegDir(const QString &dir)
+{
+    const QString normalized = urlOrPathToLocal(dir);
+    if (m_customFfmpegDir == normalized) return;
+    m_customFfmpegDir = normalized;
+    QSettings().setValue(kCustomFfmpegDirKey, m_customFfmpegDir);
+    applyCustomFfmpegDirToEnvironment();
+    m_probeEngine->recheckTools();
+    refreshFfmpegVersion();
+    emit customFfmpegDirChanged();
+    emit toolsChanged();
+}
+
+void AppController::clearCustomFfmpegDir()
+{
+    setCustomFfmpegDir(QString());
+}
+
+void AppController::copyLastErrorLogToClipboard()
+{
+    if (m_lastErrorLog.isEmpty()) return;
+    if (QGuiApplication::clipboard()) {
+        QGuiApplication::clipboard()->setText(m_lastErrorLog);
+        setLogText(tr("Error log copied to clipboard."));
+    }
+}
+
+void AppController::onSegmentsMutated()
+{
+    updateTotalDuration();
+    emit segmentsChanged();
+}
+
+void AppController::setSourcePath(const QString &path)
+{
+    if (m_sourcePath == path) return;
     m_sourcePath = path;
     emit sourcePathChanged();
 }
 
 void AppController::setOutputPath(const QString &path)
 {
-    if (m_outputPath == path) {
-        return;
-    }
+    if (m_outputPath == path) return;
     m_outputPath = path;
     emit outputPathChanged();
 }
 
 void AppController::setLogText(const QString &text)
 {
-    if (m_logText == text) {
-        return;
-    }
+    if (m_logText == text) return;
     m_logText = text;
     emit logTextChanged();
 }
 
-void AppController::setBusy(bool busy)
+void AppController::setLastErrorLog(const QString &text)
 {
-    if (m_busy == busy) {
-        return;
-    }
-    m_busy = busy;
-    emit busyChanged();
-}
-
-void AppController::setProgress(double progress)
-{
-    const double clamped = std::clamp(progress, 0.0, 1.0);
-    if (m_progress == clamped) {
-        return;
-    }
-    m_progress = clamped;
-    emit progressChanged();
+    if (m_lastErrorLog == text) return;
+    m_lastErrorLog = text;
+    emit lastErrorLogChanged();
 }
 
 void AppController::setSelectedRowValue(int row)
 {
-    if (m_selectedRow == row) {
-        return;
-    }
+    if (m_selectedRow == row) return;
     m_selectedRow = row;
     emit selectedRowChanged();
 }
 
-void AppController::probeSource(const QString &path)
-{
-    clearMediaState();
-    if (!m_ffprobeReady) {
-        setError(toolStatusText());
-        return;
-    }
-    setBusy(true);
-    setProbing(true);
-    setProgress(0.1);
-    setLogText("Probing video metadata and keyframes...");
-
-    QThread *worker = QThread::create([this, path] {
-        const QJsonObject metadataReply = RustBridge::ffprobeMetadataCommand(path);
-        const QJsonObject keyframeReply = RustBridge::ffprobeKeyframeCommand(path);
-        if (!metadataReply.value("ok").toBool() || !keyframeReply.value("ok").toBool()) {
-            const QString error = metadataReply.value("error").toString(keyframeReply.value("error").toString());
-            QMetaObject::invokeMethod(this, [this, error] {
-                setBusy(false);
-                setProbing(false);
-                setProgress(0.0);
-                setError(error);
-            }, Qt::QueuedConnection);
-            return;
-        }
-
-        const ProcessResult metadata = runCommand(RustBridge::commandFromJson(metadataReply.value("command").toObject()));
-        const ProcessResult keyframes = runCommand(RustBridge::commandFromJson(keyframeReply.value("command").toObject()));
-        if (!metadata.ok || !keyframes.ok) {
-            const QString error = !metadata.ok ? metadata.stderrText : keyframes.stderrText;
-            QMetaObject::invokeMethod(this, [this, error] {
-                setBusy(false);
-                setProbing(false);
-                setProgress(0.0);
-                setError(QStringLiteral("Probe failed: %1").arg(error));
-            }, Qt::QueuedConnection);
-            return;
-        }
-
-        const quint64 size = QFileInfo(path).size();
-        const QJsonObject parsed = RustBridge::parseProbeResult(
-            path,
-            size,
-            metadata.stdoutText,
-            keyframes.stdoutText);
-        QMetaObject::invokeMethod(this, [this, parsed] {
-            setBusy(false);
-            setProbing(false);
-            if (!parsed.value("ok").toBool()) {
-                setProgress(0.0);
-                setError(QStringLiteral("Probe failed: %1").arg(parsed.value("error").toString()));
-                return;
-            }
-            applyMetadata(parsed.value("metadata").toObject(), parsed.value("keyframes").toArray());
-            setProgress(0.0);
-            dismissNotice();
-            setLogText(QStringLiteral("Detected %1 keyframes.").arg(m_keyframes.size()));
-        }, Qt::QueuedConnection);
-    });
-    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-    worker->start();
-}
-
 void AppController::clearMediaState()
 {
+    m_probeEngine->clearState();
     m_metadataJson = QJsonObject();
     m_keyframes.clear();
     m_currentIndex = 0;
     m_hasPendingIn = false;
     m_hasPendingOut = false;
-    m_mediaFilename = "No source";
-    m_durationText = "N/A";
-    m_resolutionText = "N/A";
-    m_codecText = "N/A";
-    m_sizeText = "N/A";
-    m_mediaSummary = "Open a video to inspect stream-copy-safe keyframes.";
+    m_mediaFilename = tr("No source");
+    m_durationText = tr("N/A");
+    m_resolutionText = tr("N/A");
+    m_codecText = tr("N/A");
+    m_sizeText = tr("N/A");
+    m_mediaSummary = tr("Open a video to inspect stream-copy-safe keyframes.");
     m_inThumbUrl = QUrl();
     m_outThumbUrl = QUrl();
+    m_inThumbFile.clear();
+    m_outThumbFile.clear();
     emit metadataChanged();
     emit keyframesChanged();
     emit markersChanged();
@@ -770,18 +791,18 @@ void AppController::clearMediaState()
 void AppController::applyMetadata(const QJsonObject &metadata, const QJsonArray &keyframes)
 {
     m_metadataJson = metadata;
-    m_mediaFilename = metadata.value("filename").toString("Unknown");
+    m_mediaFilename = metadata.value("filename").toString(tr("Unknown"));
     const QJsonValue duration = metadata.value("duration_ms");
-    m_durationText = duration.isNull() ? QStringLiteral("N/A") : formatMs(static_cast<qint64>(duration.toDouble()));
+    m_durationText = duration.isNull() ? tr("N/A") : formatMs(static_cast<qint64>(duration.toDouble()));
     const int width = metadata.value("width").toInt();
     const int height = metadata.value("height").toInt();
-    m_resolutionText = width > 0 && height > 0 ? QStringLiteral("%1x%2").arg(width).arg(height) : QStringLiteral("N/A");
-    m_codecText = metadata.value("codec").toString("N/A");
+    m_resolutionText = width > 0 && height > 0 ? QStringLiteral("%1x%2").arg(width).arg(height) : tr("N/A");
+    m_codecText = metadata.value("codec").toString(tr("N/A"));
     m_sizeText = bytesText(static_cast<quint64>(metadata.value("file_size").toDouble()));
     m_mediaSummary = QStringLiteral("%1 / %2 / %3")
         .arg(m_mediaFilename,
-             metadata.value("container").toString("unknown container"),
-             metadata.value("frame_rate").toString("unknown fps"));
+             metadata.value("container").toString(tr("unknown container")),
+             metadata.value("frame_rate").toString(tr("unknown fps")));
 
     m_keyframes.clear();
     m_keyframes.reserve(keyframes.size());
@@ -804,38 +825,6 @@ void AppController::updateTotalDuration()
     m_totalDurationText = formatMs(total);
 }
 
-QString AppController::formatMs(qint64 milliseconds)
-{
-    const qint64 safe = std::max<qint64>(0, milliseconds);
-    const qint64 hours = safe / 3600000;
-    const qint64 minutes = (safe % 3600000) / 60000;
-    const qint64 seconds = (safe % 60000) / 1000;
-    const qint64 millis = safe % 1000;
-    return QStringLiteral("%1:%2:%3.%4")
-        .arg(hours, 2, 10, QLatin1Char('0'))
-        .arg(minutes, 2, 10, QLatin1Char('0'))
-        .arg(seconds, 2, 10, QLatin1Char('0'))
-        .arg(millis, 3, 10, QLatin1Char('0'));
-}
-
-QString AppController::displayPath(const QString &path) const
-{
-    return QDir::toNativeSeparators(path);
-}
-
-QString AppController::toolStatusText() const
-{
-    QStringList missing;
-    if (!m_ffmpegReady) missing.push_back("ffmpeg");
-    if (!m_ffprobeReady) missing.push_back("ffprobe");
-    if (!m_ffplayReady) missing.push_back("ffplay");
-    if (missing.isEmpty()) {
-        return "FFmpeg, FFprobe, and FFplay detected.";
-    }
-    return QStringLiteral("Missing %1. Install FFmpeg from ffmpeg.org or with Homebrew: brew install ffmpeg.")
-        .arg(missing.join(", "));
-}
-
 QJsonArray AppController::keyframesJson() const
 {
     QJsonArray array;
@@ -853,149 +842,135 @@ qint64 AppController::currentKeyframeMs() const
     return m_keyframes.at(m_currentIndex);
 }
 
-bool AppController::programExists(const QString &program)
-{
-    QProcess process;
-    process.start(program, { "-version" });
-    if (!process.waitForStarted(1000)) {
-        return false;
-    }
-    if (!process.waitForFinished(1500)) {
-        process.kill();
-        process.waitForFinished();
-        return false;
-    }
-    return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
-}
-
-AppController::ProcessResult AppController::runCommand(const RustBridge::Command &command, std::atomic_bool *cancel)
-{
-    ProcessResult result;
-    if (command.program.isEmpty()) {
-        result.stderrText = "Empty process command.";
-        return result;
-    }
-
-    QProcess process;
-    process.start(command.program, command.args);
-    if (!process.waitForStarted(10'000)) {
-        result.stderrText = QStringLiteral("Unable to start %1").arg(command.program);
-        return result;
-    }
-
-    QByteArray stdoutBuf;
-    QByteArray stderrBuf;
-    while (!process.waitForFinished(100)) {
-        stdoutBuf += process.readAllStandardOutput();
-        stderrBuf += process.readAllStandardError();
-        if (cancel && *cancel) {
-            process.kill();
-            process.waitForFinished();
-            result.stderrText = "Process cancelled.";
-            return result;
-        }
-    }
-    stdoutBuf += process.readAllStandardOutput();
-    stderrBuf += process.readAllStandardError();
-
-    result.stdoutText = QString::fromUtf8(stdoutBuf);
-    result.stderrText = QString::fromUtf8(stderrBuf).trimmed();
-    result.exitCode = process.exitCode();
-    result.ok = process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
-    if (!result.ok && result.stderrText.isEmpty()) {
-        result.stderrText = QStringLiteral("%1 exited with code %2").arg(command.program).arg(process.exitCode());
-    }
-    return result;
-}
-
-QString AppController::bytesText(quint64 bytes)
-{
-    const char *units[] = { "B", "KB", "MB", "GB", "TB" };
-    double value = static_cast<double>(bytes);
-    int unit = 0;
-    while (value >= 1024.0 && unit < 4) {
-        value /= 1024.0;
-        ++unit;
-    }
-    if (unit == 0) {
-        return QStringLiteral("%1 B").arg(bytes);
-    }
-    return QStringLiteral("%1 %2").arg(value, 0, 'f', 1).arg(units[unit]);
-}
-
-bool AppController::ensureCanExport()
-{
-    if (m_busy) {
-        setLogText("Another operation is already running.");
-        return false;
-    }
-    recheckToolsCached();
-    if (!m_ffmpegReady || !m_ffprobeReady) {
-        setLogText(toolStatusText());
-        return false;
-    }
-    if (m_sourcePath.isEmpty()) {
-        setLogText("Choose a source video first.");
-        return false;
-    }
-    if (m_outputPath.isEmpty()) {
-        setLogText("Choose an output file first.");
-        return false;
-    }
-    if (QFileInfo(m_outputPath).absoluteFilePath() == QFileInfo(m_sourcePath).absoluteFilePath()) {
-        setError("Output file must be different from the source file.");
-        return false;
-    }
-    if (m_segments->rowCount() == 0) {
-        setLogText("Add at least one segment before exporting.");
-        return false;
-    }
-    const QJsonObject validated = RustBridge::validateSegments(m_segments->toJsonArray(), keyframesJson());
-    if (!validated.value("ok").toBool()) {
-        setError(validated.value("error").toString());
-        return false;
-    }
-    return true;
-}
-
 bool AppController::writeTextFile(const QString &path, const QString &contents)
 {
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        setLogText(QStringLiteral("Unable to write %1: %2").arg(displayPath(path), file.errorString()));
+        setLogText(tr("Unable to write %1: %2").arg(QDir::toNativeSeparators(path), file.errorString()));
         return false;
     }
     file.write(contents.toUtf8());
     file.flush();
     if (file.error() != QFileDevice::NoError) {
-        setLogText(QStringLiteral("Unable to flush %1: %2").arg(displayPath(path), file.errorString()));
+        setLogText(tr("Unable to flush %1: %2").arg(QDir::toNativeSeparators(path), file.errorString()));
         return false;
     }
     return true;
 }
 
-void AppController::setNotice(const QString &text, const QString &tone)
+void AppController::refreshFfmpegVersion()
 {
-    const QString normalizedTone = text.isEmpty()
-        ? QString()
-        : (tone.isEmpty() ? QStringLiteral("info") : tone);
-    if (m_noticeText == text && m_noticeTone == normalizedTone) {
+    if (!m_probeEngine->ffmpegReady()) {
+        m_ffmpegVersionText = tr("FFmpeg not detected.");
+        m_ffmpegCompatible = false;
         return;
     }
-    m_noticeText = text;
-    m_noticeTone = normalizedTone;
-    emit noticeChanged();
+    const QString output = ProcessUtil::programVersionOutput("ffmpeg");
+    if (output.isEmpty()) {
+        m_ffmpegVersionText = tr("Unable to read FFmpeg version output.");
+        m_ffmpegCompatible = false;
+        return;
+    }
+    const QJsonObject reply = RustBridge::ffmpegCompatibility(output);
+    if (!reply.value("ok").toBool()) {
+        m_ffmpegVersionText = reply.value("error").toString();
+        m_ffmpegCompatible = false;
+        return;
+    }
+    const QJsonObject compat = reply.value("compatibility").toObject();
+    m_ffmpegCompatible = compat.value("compatible").toBool();
+    m_ffmpegVersionText = compat.value("message").toString();
 }
 
-void AppController::setError(const QString &text)
+void AppController::applyCustomFfmpegDirToEnvironment()
 {
-    setLogText(text);
-    setNotice(text, QStringLiteral("bad"));
+    static QString s_originalPath;
+    if (s_originalPath.isNull()) {
+        s_originalPath = qEnvironmentVariable("PATH");
+    }
+    QString path = s_originalPath;
+    if (!m_customFfmpegDir.isEmpty()) {
+        const QChar sep = QDir::listSeparator();
+        path = m_customFfmpegDir + sep + path;
+    }
+    qputenv("PATH", path.toLocal8Bit());
+}
+
+bool AppController::ensureCanExportForTesting()
+{
+    return m_exportEngine->ensureCanExport(
+        m_probeEngine->ffmpegReady(),
+        m_probeEngine->ffprobeReady(),
+        m_sourcePath,
+        m_outputPath,
+        m_segments,
+        keyframesJson(),
+        m_exportEngine->busy());
+}
+
+void AppController::setPathsForTesting(const QString &source, const QString &output)
+{
+    m_sourcePath = source;
+    m_outputPath = output;
+}
+
+void AppController::setToolsReadyForTesting(bool ffmpegReady, bool ffprobeReady)
+{
+    Q_UNUSED(ffmpegReady);
+    Q_UNUSED(ffprobeReady);
+}
+
+void AppController::setOverwriteDecisionProviderForTesting(const std::function<bool(const QString &)> &provider)
+{
+    m_exportEngine->setOverwriteDecisionProviderForTesting(provider);
+}
+
+bool AppController::overwriteApprovedForSessionForTesting() const
+{
+    return m_exportEngine->overwriteApprovedForSession();
+}
+
+void AppController::setKeyframesForTesting(const QVector<qint64> &keyframes)
+{
+    m_keyframes = keyframes;
+}
+
+qint64 AppController::snapToKeyframe(qint64 ms)
+{
+    if (m_keyframes.isEmpty()) {
+        return ms;
+    }
+    const QJsonObject snap = RustBridge::nearestKeyframe(keyframesJson(), ms);
+    if (!snap.value("ok").toBool()) {
+        return ms;
+    }
+    const qint64 snapped = static_cast<qint64>(snap.value("snap").toObject().value("snapped_ms").toDouble());
+    const auto it = std::lower_bound(m_keyframes.begin(), m_keyframes.end(), snapped);
+    if (it != m_keyframes.end() && *it == snapped) {
+        m_currentIndex = static_cast<int>(std::distance(m_keyframes.begin(), it));
+        emit keyframesChanged();
+    }
+    return snapped;
 }
 
 void AppController::dismissNotice()
 {
     setNotice(QString(), QString());
+}
+
+bool AppController::outputExists() const
+{
+    return !m_outputPath.isEmpty() && QFileInfo::exists(m_outputPath);
+}
+
+void AppController::setNotice(const QString &text, const QString &tone)
+{
+    if (m_noticeText == text && m_noticeTone == tone) {
+        return;
+    }
+    m_noticeText = text;
+    m_noticeTone = tone;
+    emit noticeChanged();
 }
 
 void AppController::setProbing(bool probing)
@@ -1007,71 +982,77 @@ void AppController::setProbing(bool probing)
     emit probingChanged();
 }
 
-bool AppController::outputExists() const
-{
-    return !m_outputPath.isEmpty() && QFileInfo::exists(m_outputPath);
-}
-
 QString AppController::ensureThumbDir()
 {
-    if (m_thumbDirPath.isEmpty()) {
-        const QString path = QDir::temp().filePath(
-            QStringLiteral("seder-video-rewrap-thumbs-%1").arg(QCoreApplication::applicationPid()));
-        if (!QDir().mkpath(path)) {
-            return QString();
-        }
-        m_thumbDirPath = path;
+    if (!m_thumbDirPath.isEmpty()) {
+        return m_thumbDirPath;
     }
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    if (base.isEmpty()) {
+        return QString();
+    }
+    QDir dir(base);
+    const QString sub = QStringLiteral("seder-rewrap-thumbs-%1").arg(QCoreApplication::applicationPid());
+    if (!dir.exists(sub) && !dir.mkpath(sub)) {
+        return QString();
+    }
+    m_thumbDirPath = dir.filePath(sub);
     return m_thumbDirPath;
 }
 
-// Render a single still frame for the IN/OUT marker so the UI can show what the
-// cut lands on. Runs ffmpeg on a worker thread; thumbnails are best-effort, so
-// failures are swallowed silently rather than surfaced as errors.
 void AppController::generateThumbnail(qint64 timeMs, bool isIn)
 {
-    if (m_sourcePath.isEmpty() || !m_ffmpegReady) {
+    if (!m_probeEngine->ffmpegReady() || m_sourcePath.isEmpty()) {
         return;
     }
-    const QString dir = ensureThumbDir();
-    if (dir.isEmpty()) {
+    const QString thumbDir = ensureThumbDir();
+    if (thumbDir.isEmpty()) {
         return;
     }
-    const QString outPath = QDir(dir).filePath(
-        QStringLiteral("%1-%2.png")
-            .arg(isIn ? QStringLiteral("in") : QStringLiteral("out"))
-            .arg(timeMs));
-    const QJsonObject reply = RustBridge::ffmpegThumbnailCommand(m_sourcePath, timeMs, outPath);
+    const QString source = m_sourcePath;
+    const QString outFile = QStringLiteral("%1/%2-%3.png")
+                                .arg(thumbDir, isIn ? QStringLiteral("in") : QStringLiteral("out"))
+                                .arg(timeMs);
+
+    const QJsonObject reply = RustBridge::ffmpegThumbnailCommand(source, timeMs, outFile);
     if (!reply.value("ok").toBool()) {
         return;
     }
     const RustBridge::Command command = RustBridge::commandFromJson(reply.value("command").toObject());
-    const QString capturedSource = m_sourcePath;
-    QThread *worker = QThread::create([this, command, outPath, isIn, timeMs, capturedSource] {
-        const ProcessResult result = runCommand(command);
-        if (!result.ok) {
+
+    QPointer<AppController> self(this);
+    QThread *worker = QThread::create([self, command, source, timeMs, outFile, isIn] {
+        const ProcessResult result = ProcessUtil::runCommand(command.program, command.args);
+        if (!self) {
             return;
         }
-        QMetaObject::invokeMethod(this, [this, outPath, isIn, timeMs, capturedSource] {
-            // Discard if the source or marker changed while this job was running.
-            if (m_sourcePath != capturedSource) {
+        QMetaObject::invokeMethod(self.data(), [self, result, source, timeMs, outFile, isIn] {
+            if (!self) {
                 return;
             }
-            const qint64 currentMs = isIn ? m_pendingIn : m_pendingOut;
-            if (currentMs != timeMs) {
+            // Staleness guard: drop the frame if the source changed or the
+            // marker moved while ffmpeg was decoding.
+            if (self->m_sourcePath != source) {
                 return;
             }
-            QString &fileRef = isIn ? m_inThumbFile : m_outThumbFile;
-            if (!fileRef.isEmpty() && fileRef != outPath) {
-                QFile::remove(fileRef);
+            if (isIn && (!self->m_hasPendingIn || self->m_pendingIn != timeMs)) {
+                return;
             }
-            fileRef = outPath;
+            if (!isIn && (!self->m_hasPendingOut || self->m_pendingOut != timeMs)) {
+                return;
+            }
+            if (!result.ok || !QFileInfo::exists(outFile)) {
+                return;
+            }
+            const QUrl url = QUrl::fromLocalFile(outFile);
             if (isIn) {
-                m_inThumbUrl = QUrl::fromLocalFile(outPath);
+                self->m_inThumbFile = outFile;
+                self->m_inThumbUrl = url;
             } else {
-                m_outThumbUrl = QUrl::fromLocalFile(outPath);
+                self->m_outThumbFile = outFile;
+                self->m_outThumbUrl = url;
             }
-            emit thumbnailsChanged();
+            emit self->thumbnailsChanged();
         }, Qt::QueuedConnection);
     });
     connect(worker, &QThread::finished, worker, &QObject::deleteLater);

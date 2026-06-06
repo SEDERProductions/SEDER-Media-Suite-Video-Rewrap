@@ -1,9 +1,10 @@
 use crate::media_core::video_rewrap::{
-    ffmpeg_concat_command, ffmpeg_segment_command, ffmpeg_thumbnail_command,
-    ffplay_preview_command, ffprobe_keyframe_command, ffprobe_metadata_command, format_ms,
-    nearest_keyframe, parse_ffprobe_keyframes, parse_ffprobe_metadata, parse_timecode_to_ms,
+    evaluate_update, ffmpeg_compatibility, ffmpeg_concat_command, ffmpeg_segment_command,
+    ffmpeg_thumbnail_command, ffplay_preview_command, ffprobe_keyframe_command,
+    ffprobe_metadata_command, format_ms, nearest_keyframe, output_extension,
+    parse_ffprobe_keyframes, parse_ffprobe_metadata, parse_project_json, parse_timecode_to_ms,
     rewrap_preflight, rewrap_report_csv, rewrap_report_txt, temp_segment_path, validate_segments,
-    RewrapProject, RewrapSegment, VideoMetadata, CURRENT_PROJECT_VERSION,
+    ExportMode, RewrapProject, RewrapSegment, VideoMetadata, CURRENT_PROJECT_VERSION,
 };
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
@@ -42,14 +43,6 @@ fn concat_list(paths: &[PathBuf]) -> String {
         .iter()
         .map(|path| format!("file '{}'\n", concat_escape(path)))
         .collect::<String>()
-}
-
-fn output_extension(path: &Path) -> String {
-    path.extension()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .unwrap_or("mov")
-        .to_string()
 }
 
 fn response(result: Result<Value>) -> *mut c_char {
@@ -263,6 +256,7 @@ pub extern "C" fn svr_export_plan(
     temp_root: *const c_char,
     segments_json: *const c_char,
     keyframes_json: *const c_char,
+    export_mode: *const c_char,
 ) -> *mut c_char {
     response((|| {
         let source = input(source, "source")?;
@@ -270,8 +264,11 @@ pub extern "C" fn svr_export_plan(
         let temp_root = input(temp_root, "temp_root")?;
         let segments_json = input(segments_json, "segments_json")?;
         let keyframes_json = input(keyframes_json, "keyframes_json")?;
+        let export_mode = input(export_mode, "export_mode")?;
         let segments = parse_segments(&segments_json)?;
         let keyframes = parse_keyframes(&keyframes_json)?;
+        let export_mode: ExportMode =
+            serde_json::from_str(&format!("\"{export_mode}\"")).context("Invalid export mode")?;
         validate_segments(&segments, &keyframes)?;
         let enabled = segments
             .iter()
@@ -297,13 +294,14 @@ pub extern "C" fn svr_export_plan(
             }));
             segment_paths.push(segment_path);
         }
-        let list_path = temp_root.join("concat.txt");
-        Ok(json!({
-            "segments": planned_segments,
-            "listPath": path_string(&list_path),
-            "listText": concat_list(&segment_paths),
-            "concatCommand": ffmpeg_concat_command(&list_path, output),
-        }))
+        let mut payload = json!({ "segments": planned_segments });
+        if export_mode == ExportMode::ConcatSingle {
+            let list_path = temp_root.join("concat.txt");
+            payload["listPath"] = json!(path_string(&list_path));
+            payload["listText"] = json!(concat_list(&segment_paths));
+            payload["concatCommand"] = json!(ffmpeg_concat_command(&list_path, output));
+        }
+        Ok(payload)
     })())
 }
 
@@ -333,9 +331,29 @@ pub extern "C" fn svr_project_json(
 pub extern "C" fn svr_parse_project_json(project_json: *const c_char) -> *mut c_char {
     response((|| {
         let project_json = input(project_json, "project_json")?;
-        let project: RewrapProject =
-            serde_json::from_str(&project_json).context("Invalid project JSON")?;
+        let project = parse_project_json(&project_json)?;
         Ok(json!({ "project": project }))
+    })())
+}
+
+#[no_mangle]
+pub extern "C" fn svr_ffmpeg_compatibility(version_output: *const c_char) -> *mut c_char {
+    response((|| {
+        let output = input(version_output, "version_output")?;
+        Ok(json!({ "compatibility": ffmpeg_compatibility(&output) }))
+    })())
+}
+
+#[no_mangle]
+pub extern "C" fn svr_evaluate_update(
+    latest_json: *const c_char,
+    current_version: *const c_char,
+) -> *mut c_char {
+    response((|| {
+        let latest_json = input(latest_json, "latest_json")?;
+        let current_version = input(current_version, "current_version")?;
+        let info = evaluate_update(&latest_json, &current_version)?;
+        Ok(json!({ "update": info }))
     })())
 }
 
@@ -344,14 +362,18 @@ pub extern "C" fn svr_rewrap_report_txt(
     source: *const c_char,
     output: *const c_char,
     segments_json: *const c_char,
+    export_mode: *const c_char,
 ) -> *mut c_char {
     response((|| {
         let source = input(source, "source")?;
         let output = input(output, "output")?;
         let segments_json = input(segments_json, "segments_json")?;
+        let export_mode = input(export_mode, "export_mode")?;
+        let export_mode: ExportMode =
+            serde_json::from_str(&format!("\"{export_mode}\"")).context("Invalid export mode")?;
         let segments = parse_segments(&segments_json)?;
         Ok(json!({
-            "report": rewrap_report_txt(Path::new(&source), Path::new(&output), &segments),
+            "report": rewrap_report_txt(Path::new(&source), Path::new(&output), &segments, export_mode),
         }))
     })())
 }
@@ -361,14 +383,18 @@ pub extern "C" fn svr_rewrap_report_csv(
     source: *const c_char,
     output: *const c_char,
     segments_json: *const c_char,
+    export_mode: *const c_char,
 ) -> *mut c_char {
     response((|| {
         let source = input(source, "source")?;
         let output = input(output, "output")?;
         let segments_json = input(segments_json, "segments_json")?;
+        let export_mode = input(export_mode, "export_mode")?;
+        let export_mode: ExportMode =
+            serde_json::from_str(&format!("\"{export_mode}\"")).context("Invalid export mode")?;
         let segments = parse_segments(&segments_json)?;
         Ok(json!({
-            "report": rewrap_report_csv(Path::new(&source), Path::new(&output), &segments),
+            "report": rewrap_report_csv(Path::new(&source), Path::new(&output), &segments, export_mode),
         }))
     })())
 }
@@ -440,7 +466,7 @@ mod tests {
     }
 
     #[test]
-    fn ffi_rewrap_preflight_reports_container_mismatch() {
+    fn ffi_rewrap_preflight_passes_for_any_output_container() {
         let metadata = CString::new(r#"{"filename":"src.mov","duration_ms":1000,"container":"mov,mp4,m4a,3gp,3g2,mj2","width":1920,"height":1080,"codec":"h264","frame_rate":"30/1","file_size":1}"#).unwrap();
         let output = CString::new("/tmp/out.mkv").unwrap();
         let segments =
@@ -453,11 +479,12 @@ mod tests {
             segments.as_ptr(),
             keyframes.as_ptr(),
         ));
-        assert_eq!(parsed["ok"], false);
-        assert!(parsed["error"]
-            .as_str()
+        assert_eq!(parsed["ok"], true);
+        assert!(parsed["preflight"]["guidance"]
+            .as_array()
             .unwrap()
-            .contains("No re-encode fallback is available"));
+            .iter()
+            .any(|g| g.as_str().unwrap().contains("stream-copy")));
     }
 
     #[test]
@@ -469,12 +496,14 @@ mod tests {
             CString::new(r#"[{"name":"A","in_ms":0,"out_ms":1000,"notes":"","enabled":true}]"#)
                 .unwrap();
         let keyframes = CString::new("[0,1000]").unwrap();
+        let mode = CString::new("concat_single").unwrap();
         let parsed = call(svr_export_plan(
             source.as_ptr(),
             output.as_ptr(),
             temp.as_ptr(),
             segments.as_ptr(),
             keyframes.as_ptr(),
+            mode.as_ptr(),
         ));
         assert_eq!(parsed["ok"], true);
         assert_eq!(parsed["segments"].as_array().unwrap().len(), 1);
@@ -493,6 +522,7 @@ mod tests {
             CString::new(r#"[{"name":"A","in_ms":0,"out_ms":1000,"notes":"","enabled":true}]"#)
                 .unwrap();
         let keyframes = CString::new("[0,1000]").unwrap();
+        let mode = CString::new("concat_single").unwrap();
 
         let output_mp4 = CString::new("/tmp/out.mp4").unwrap();
         let parsed_mp4 = call(svr_export_plan(
@@ -501,6 +531,7 @@ mod tests {
             temp.as_ptr(),
             segments.as_ptr(),
             keyframes.as_ptr(),
+            mode.as_ptr(),
         ));
         assert_eq!(parsed_mp4["ok"], true);
         assert!(parsed_mp4["listText"]
@@ -515,11 +546,38 @@ mod tests {
             temp.as_ptr(),
             segments.as_ptr(),
             keyframes.as_ptr(),
+            mode.as_ptr(),
         ));
         assert_eq!(parsed_mxf["ok"], true);
         assert!(parsed_mxf["listText"]
             .as_str()
             .unwrap()
             .contains("segment-0001.mxf"));
+    }
+
+    #[test]
+    fn ffi_builds_export_plan_for_separate_files() {
+        let source = CString::new("/tmp/source.mov").unwrap();
+        let output = CString::new("/tmp/out.mov").unwrap();
+        let temp = CString::new("/tmp/seder-video-rewrap").unwrap();
+        let segments =
+            CString::new(r#"[{"name":"A","in_ms":0,"out_ms":1000,"notes":"","enabled":true}]"#)
+                .unwrap();
+        let keyframes = CString::new("[0,1000]").unwrap();
+        let mode = CString::new("separate_files").unwrap();
+        let parsed = call(svr_export_plan(
+            source.as_ptr(),
+            output.as_ptr(),
+            temp.as_ptr(),
+            segments.as_ptr(),
+            keyframes.as_ptr(),
+            mode.as_ptr(),
+        ));
+        assert_eq!(parsed["ok"], true);
+        assert!(parsed.get("concatCommand").is_none());
+        assert!(parsed["segments"][0]["path"]
+            .as_str()
+            .unwrap()
+            .contains("segment-0001.mov"));
     }
 }

@@ -18,16 +18,19 @@ permissions:
 jobs:
   tag:
     name: Tag version bump
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: "github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, 'chore: bump version to')"
     outputs:
       release_tag: ${{ steps.bump.outputs.release_tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Bump patch version and tag
         id: bump
@@ -36,7 +39,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          latest_tag=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo "v0.0.0")
           echo "Latest tag: $latest_tag"
 
           if [[ "$latest_tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
@@ -50,6 +53,25 @@ jobs:
             major=0; minor=1; new_patch=0
           fi
 
+          # If Cargo.toml has been bumped past the auto-patch (major/minor
+          # release), honour the manifest instead of clobbering it. This lets
+          # us land a 1.0.0 / 1.1.0 bump on main without fighting the auto
+          # patch step.
+          cargo_version=$(grep -E '^version = "' Cargo.toml | head -1 | sed -E 's/version = "([^"]+)"/\1/')
+          if [[ "$cargo_version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            cmaj="${BASH_REMATCH[1]}"
+            cmin="${BASH_REMATCH[2]}"
+            cpat="${BASH_REMATCH[3]}"
+            # Compare: cargo > current candidate?
+            if [ "$cmaj" -gt "$major" ] \
+              || { [ "$cmaj" -eq "$major" ] && [ "$cmin" -gt "$minor" ]; } \
+              || { [ "$cmaj" -eq "$major" ] && [ "$cmin" -eq "$minor" ] && [ "$cpat" -gt "$new_patch" ]; }; then
+              major="$cmaj"; minor="$cmin"; new_patch="$cpat"
+              new_tag="v${major}.${minor}.${new_patch}"
+              echo "Using Cargo.toml version: $new_tag"
+            fi
+          fi
+
           echo "release_tag=$new_tag" >> "$GITHUB_OUTPUT"
           echo "New tag: $new_tag"
 
@@ -59,11 +81,18 @@ jobs:
           # Update package.json
           sed -i -E 's/"version": "[^"]+"/"version": "'"${major}.${minor}.${new_patch}"'"/' package.json
 
-          git add Cargo.toml package.json
+          # Update qt/CMakeLists.txt project version (the Qt build target stays
+          # in lock-step with Cargo/npm; this prevents the drift seen in PRs #20.)
+          sed -i -E 's/^(project\(SederVideoRewrapQt VERSION )[^ ]+/\1'"${major}.${minor}.${new_patch}"'/' qt/CMakeLists.txt
+
+          # Update Cargo.lock so package metadata stays consistent with Cargo.toml.
+          cargo generate-lockfile
+
+          git add Cargo.toml Cargo.lock package.json qt/CMakeLists.txt
           git diff --cached --quiet || git commit -m "chore: bump version to ${new_tag}"
           git tag "$new_tag"
-          git push origin main
-          git push origin "$new_tag"
+          git push origin HEAD:refs/heads/main
+          git push origin "refs/tags/$new_tag"
 
   build:
     name: Build ${{ matrix.os }}
@@ -74,7 +103,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-24.04, macos-latest, windows-latest]
     steps:
       - name: Resolve release tag
         id: vars
@@ -87,7 +116,7 @@ jobs:
           echo "Release tag: $tag"
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ steps.vars.outputs.tag }}
 
@@ -96,54 +125,97 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential cmake ninja-build wget zip \
+            build-essential cmake ninja-build zip \
             libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 \
             libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
             libxcb-render-util0 libxcb-xinerama0
 
-      - name: Install Linux AppImage tooling
-        if: runner.os == 'Linux'
-        run: |
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
-          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
-          sudo mv linuxdeploy-x86_64.AppImage /usr/local/bin/linuxdeploy-x86_64.AppImage
-          sudo mv linuxdeploy-plugin-qt-x86_64.AppImage /usr/local/bin/linuxdeploy-plugin-qt-x86_64.AppImage
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.7.*'
+          version: '6.4.2'
           modules: 'qtmultimedia'
           cache: true
 
-      - name: Install npm dependencies
-        run: npm ci
+      - name: Configure
+        run: cmake -S qt -B qt/build/release -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=dist
 
-      - name: Build release package
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: 1
-        run: npm run package:release 2>&1 | tee build.log
+      - name: Build
+        run: cmake --build qt/build/release --config Release
 
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log-${{ matrix.os }}
-          path: build.log
-          if-no-files-found: ignore
+      - name: Install (deploys Qt runtime) - Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/bin
+          $exe = Get-ChildItem -Path qt/build/release -Recurse -Filter seder-video-rewrap.exe | Select-Object -First 1
+          Copy-Item $exe.FullName dist/bin/
+          cmake --install qt/build/release --config Release
+
+      - name: Install (deploys Qt runtime) - Unix
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist/bin
+          exe=$(find qt/build/release -name 'seder-video-rewrap' -type f -not -path '*.o.d' | head -1)
+          if [ -z "$exe" ]; then exe=$(find qt/build/release -name 'seder-video-rewrap.exe' -type f | head -1); fi
+          if [ -z "$exe" ]; then exe=$(find qt/build/release -path '*/seder-video-rewrap.app' -type d | head -1); fi
+          echo "Found executable: $exe"
+          cp -a "$exe" dist/bin/ 2>/dev/null || true
+          cmake --install qt/build/release --config Release
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "seder-video-rewrap-${{ steps.vars.outputs.tag }}-windows-x64"
+          $stage = "release/$name"
+          New-Item -ItemType Directory -Force -Path $stage
+          Copy-Item -Path dist/* -Destination $stage -Recurse -Force
+          Compress-Archive -Path "$stage/*" -DestinationPath "release/$name.zip" -Force
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          app=$(find dist -maxdepth 2 -name '*.app' -type d -print -quit || echo "")
+          if [ -n "$app" ]; then
+            name="seder-video-rewrap-${{ steps.vars.outputs.tag }}-macos-arm64"
+            mkdir -p release
+            ditto -c -k --keepParent "$app" "release/$name.zip"
+          else
+            echo "No .app bundle found"; exit 1
+          fi
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          name="seder-video-rewrap-${{ steps.vars.outputs.tag }}-linux-x64"
+          mkdir -p release
+          # Include the .desktop file and a 256px icon at the standard XDG
+          # paths so file managers and app launchers pick them up after
+          # unzipping into /opt/seder-video-rewrap or similar.
+          mkdir -p dist/share/applications dist/share/icons/hicolor/256x256/apps
+          cp assets/seder-video-rewrap.desktop dist/share/applications/
+          if [ -f assets/icon-256.png ]; then
+            cp assets/icon-256.png dist/share/icons/hicolor/256x256/apps/seder-video-rewrap.png
+          fi
+          cd dist && zip -r "../release/$name.zip" .
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd release
+          for f in *; do
+            if [ -f "$f" ] && [ "$f" != "SHA256SUMS.txt" ]; then
+              sha256sum "$f" >> SHA256SUMS.txt
+            fi
+          done
+          cat SHA256SUMS.txt
 
       - name: Upload release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.os }}
           path: release/*
@@ -153,7 +225,7 @@ jobs:
     name: Publish Release
     needs: [tag, build]
     if: always() && !failure() && !cancelled()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Resolve release tag
         id: vars
@@ -163,10 +235,12 @@ jobs:
           if [ -z "$tag" ]; then tag="${{ needs.tag.outputs.release_tag }}"; fi
           if [ -z "$tag" ]; then tag="${{ github.ref_name }}"; fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          # The update channel compares semver, not the v-prefixed tag.
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
           echo "Release tag: $tag"
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           pattern: release-*
@@ -189,8 +263,24 @@ jobs:
           done
           cat SHA256SUMS.txt
 
+      - name: Generate latest.json for in-app update channel
+        shell: bash
+        run: |
+          tag="${{ steps.vars.outputs.tag }}"
+          version="${{ steps.vars.outputs.version }}"
+          release_url="https://github.com/${{ github.repository }}/releases/tag/${tag}"
+          cat > artifacts/latest.json <<EOF
+          {
+            "version": "${version}",
+            "tag": "${tag}",
+            "url": "${release_url}",
+            "published_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          cat artifacts/latest.json
+
       - name: Create or update GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.vars.outputs.tag }}
           files: artifacts/*

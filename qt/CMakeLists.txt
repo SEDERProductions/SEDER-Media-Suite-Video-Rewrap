@@ -1,14 +1,22 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(SederVideoRewrapQt VERSION 0.1.0 LANGUAGES CXX)
+project(SederVideoRewrapQt VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Quick QuickControls2 Widgets Test Multimedia)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Multimedia Network Qml Quick QuickControls2 Widgets Test)
+
+# Stamp PROJECT_VERSION into a header so every translation unit sees the same
+# string. configure_file is bulletproof across all CMake generators (Ninja,
+# MSBuild, Xcode), unlike target_compile_definitions with embedded quotes.
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/seder_version.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/seder_version.h
+    @ONLY
+)
 
 set(RUST_TARGET_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../target)
 set(RUST_CORE_LIBRARY ${RUST_TARGET_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}seder_video_rewrap${CMAKE_STATIC_LIBRARY_SUFFIX})
@@ -22,11 +30,14 @@ add_custom_target(seder_video_rewrap_core ALL
 )
 
 set(SEDER_APP_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../assets/icon.ico")
+set(SEDER_APP_ICON_MACOS "${CMAKE_CURRENT_SOURCE_DIR}/../assets/icon.icns")
 
-# CMake builds a flat executable on macOS; scripts/package-release.mjs assembles the
-# .app bundle from scratch (Info.plist, icon.icns, codesign). Keeping the CMake build
-# bundle-free avoids two divergent bundle layouts for one binary.
 set(SEDER_APP_PLATFORM_SOURCES "")
+if(APPLE AND EXISTS "${SEDER_APP_ICON_MACOS}")
+    set_source_files_properties("${SEDER_APP_ICON_MACOS}" PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources")
+    list(APPEND SEDER_APP_PLATFORM_SOURCES "${SEDER_APP_ICON_MACOS}")
+endif()
 if(WIN32 AND EXISTS "${SEDER_APP_ICON_PATH}")
     # Copy the icon next to the generated app.rc so RC.exe sees a simple
     # relative path without any forward/backslash translation issues.
@@ -37,11 +48,18 @@ if(WIN32 AND EXISTS "${SEDER_APP_ICON_PATH}")
 endif()
 
 qt_add_executable(seder-video-rewrap
+    MACOSX_BUNDLE
     WIN32
     src/main.cpp
     src/AppController.cpp
+    src/ExportEngine.cpp
+    src/ProbeEngine.cpp
+    src/ProcessUtil.cpp
+    src/RecentFilesModel.cpp
     src/RustBridge.cpp
+    src/SegmentCommands.cpp
     src/SegmentTableModel.cpp
+    src/UpdateChecker.cpp
     ${SEDER_APP_PLATFORM_SOURCES}
 )
 
@@ -50,15 +68,18 @@ add_dependencies(seder-video-rewrap seder_video_rewrap_core)
 target_include_directories(seder-video-rewrap PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}
 )
 
 target_link_libraries(seder-video-rewrap PRIVATE
     Qt6::Core
     Qt6::Gui
+    Qt6::Multimedia
+    Qt6::Network
+    Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2
     Qt6::Widgets
-    Qt6::Multimedia
     ${RUST_CORE_LIBRARY}
 )
 
@@ -75,14 +96,35 @@ if(APPLE)
         "-framework Security"
         "-framework SystemConfiguration"
     )
+    set_target_properties(seder-video-rewrap PROPERTIES
+        MACOSX_BUNDLE_GUI_IDENTIFIER com.sederproductions.media-suite.video-rewrap
+        MACOSX_BUNDLE_BUNDLE_NAME "SEDER Media Suite Video Rewrap"
+        MACOSX_BUNDLE_ICON_FILE icon.icns
+    )
 endif()
 
 qt_add_qml_module(seder-video-rewrap
     URI Seder.VideoRewrap
     VERSION 1.0
+    RESOURCE_PREFIX "/qt/qml"
     QML_FILES
         qml/Main.qml
 )
+
+if(Qt6_VERSION VERSION_GREATER_EQUAL "6.5.0")
+    qt_generate_deploy_qml_app_script(
+        TARGET seder-video-rewrap
+        OUTPUT_SCRIPT seder_deploy_script
+        NO_UNSUPPORTED_PLATFORM_ERROR
+    )
+else()
+    qt_generate_deploy_qml_app_script(
+        TARGET seder-video-rewrap
+        FILENAME_VARIABLE seder_deploy_script
+        NO_UNSUPPORTED_PLATFORM_ERROR
+    )
+endif()
+install(SCRIPT ${seder_deploy_script})
 
 enable_testing()
 
@@ -112,3 +154,49 @@ if(WIN32)
 endif()
 
 add_test(NAME segment-model-tests COMMAND segment-model-tests)
+
+qt_add_executable(app-controller-tests
+    tests/AppControllerTests.cpp
+    src/AppController.cpp
+    src/ExportEngine.cpp
+    src/ProbeEngine.cpp
+    src/ProcessUtil.cpp
+    src/RecentFilesModel.cpp
+    src/RustBridge.cpp
+    src/SegmentCommands.cpp
+    src/SegmentTableModel.cpp
+    src/UpdateChecker.cpp
+)
+
+add_dependencies(app-controller-tests seder_video_rewrap_core)
+
+target_include_directories(app-controller-tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+target_link_libraries(app-controller-tests PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Network
+    Qt6::Widgets
+    Qt6::Test
+    ${RUST_CORE_LIBRARY}
+)
+
+if(WIN32)
+    target_link_libraries(app-controller-tests PRIVATE
+        ntdll ws2_32 userenv bcrypt
+    )
+endif()
+
+if(APPLE)
+    target_link_libraries(app-controller-tests PRIVATE
+        "-framework Security"
+        "-framework SystemConfiguration"
+    )
+endif()
+
+add_test(NAME app-controller-tests COMMAND app-controller-tests)
+set_tests_properties(app-controller-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
