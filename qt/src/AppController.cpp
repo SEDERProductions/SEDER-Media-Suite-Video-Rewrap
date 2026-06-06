@@ -69,10 +69,22 @@ qint64 AppController::durationMs() const
 
 QVariantList AppController::keyframesMs() const
 {
+    // Cap displayed markers to avoid creating thousands of QML items for
+    // all-intra sources (ProRes, DNxHR). Evenly subsample when over the limit.
+    constexpr int kMaxMarkers = 500;
     QVariantList list;
-    list.reserve(m_keyframes.size());
-    for (qint64 keyframe : m_keyframes) {
-        list.push_back(QVariant::fromValue(keyframe));
+    const int n = m_keyframes.size();
+    if (n <= kMaxMarkers) {
+        list.reserve(n);
+        for (qint64 ms : m_keyframes) {
+            list.push_back(QVariant::fromValue(ms));
+        }
+    } else {
+        list.reserve(kMaxMarkers);
+        for (int i = 0; i < kMaxMarkers; ++i) {
+            const int idx = static_cast<int>(static_cast<qint64>(i) * (n - 1) / (kMaxMarkers - 1));
+            list.push_back(QVariant::fromValue(m_keyframes[idx]));
+        }
     }
     return list;
 }
@@ -1034,12 +1046,21 @@ void AppController::generateThumbnail(qint64 timeMs, bool isIn)
         return;
     }
     const RustBridge::Command command = RustBridge::commandFromJson(reply.value("command").toObject());
-    QThread *worker = QThread::create([this, command, outPath, isIn] {
+    const QString capturedSource = m_sourcePath;
+    QThread *worker = QThread::create([this, command, outPath, isIn, timeMs, capturedSource] {
         const ProcessResult result = runCommand(command);
         if (!result.ok) {
             return;
         }
-        QMetaObject::invokeMethod(this, [this, outPath, isIn] {
+        QMetaObject::invokeMethod(this, [this, outPath, isIn, timeMs, capturedSource] {
+            // Discard if the source or marker changed while this job was running.
+            if (m_sourcePath != capturedSource) {
+                return;
+            }
+            const qint64 currentMs = isIn ? m_pendingIn : m_pendingOut;
+            if (currentMs != timeMs) {
+                return;
+            }
             QString &fileRef = isIn ? m_inThumbFile : m_outThumbFile;
             if (!fileRef.isEmpty() && fileRef != outPath) {
                 QFile::remove(fileRef);
