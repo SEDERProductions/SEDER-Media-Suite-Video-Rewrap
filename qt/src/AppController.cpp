@@ -885,9 +885,20 @@ void AppController::refreshFfmpegVersion()
 void AppController::applyCustomFfmpegDirToEnvironment()
 {
     static QString s_originalPath;
+    static QString s_appliedCustomDir;
     if (s_originalPath.isNull()) {
         s_originalPath = qEnvironmentVariable("PATH");
     }
+    if (m_customFfmpegDir == s_appliedCustomDir) {
+        // PATH already reflects this setting -- skip qputenv. Rewriting the
+        // process-wide environment on every construction (even as a no-op)
+        // races with ProbeEngine::recheckBackground()'s worker threads, which
+        // read that same environment via QProcess::start. Constructing many
+        // AppControllers back to back (as the test suite does) turns that
+        // race into a near-guaranteed crash on Windows.
+        return;
+    }
+    s_appliedCustomDir = m_customFfmpegDir;
     QString path = s_originalPath;
     if (!m_customFfmpegDir.isEmpty()) {
         const QChar sep = QDir::listSeparator();
