@@ -15,7 +15,8 @@ Builds are ad-hoc signed by SEDER Productions for tamper-detection. macOS may st
 - Qt 6/QML desktop interface with menu bar, drag-and-drop, full keyboard shortcuts, and accessibility labels.
 - Compiled Rust media core for timecode, keyframe, segment, project, and report logic.
 - FFprobe metadata and keyframe discovery.
-- FFplay preview from the selected keyframe.
+- Embedded video preview with an interactive keyframe timeline, draggable playhead, IN/OUT range, segment preview, and IN/OUT frame thumbnails.
+- External FFplay preview as a fallback for codecs the in-app player cannot decode.
 - FFmpeg stream-copy export with no re-encode fallback. Refuses to start on FFmpeg < 4.0 instead of failing cryptically.
 - Project save/load with explicit schema versioning, plus TXT and CSV report export.
 - Undo / redo for every segment edit.
@@ -36,7 +37,7 @@ For development:
 
 - Rust stable
 - Node.js 20 or newer
-- Qt 6.5 or newer
+- Qt 6.5 or newer, including the Qt Multimedia module (for the in-app video preview)
 - CMake 3.24 or newer
 
 ## Build

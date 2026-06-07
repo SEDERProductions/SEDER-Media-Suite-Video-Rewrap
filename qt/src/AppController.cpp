@@ -11,9 +11,12 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QPointer>
 #include <QProcess>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QStyleHints>
+#include <QThread>
 #include <QUrl>
 #include <algorithm>
 
@@ -102,11 +105,14 @@ AppController::AppController(SegmentTableModel *segments, QObject *parent)
     });
     connect(m_probeEngine, &ProbeEngine::logMessage, this, &AppController::setLogText);
     connect(m_probeEngine, &ProbeEngine::probeComplete, this, [this](bool ok, QJsonObject metadata, QJsonArray keyframes, QString error) {
+        setProbing(false);
         if (ok) {
             applyMetadata(metadata, keyframes);
+            setNotice(QString(), QString());
             setLogText(tr("Detected %1 keyframes.").arg(m_keyframes.size()));
         } else {
             setLastErrorLog(error);
+            setNotice(error, QStringLiteral("bad"));
             setLogText(error);
         }
     });
@@ -168,6 +174,42 @@ bool AppController::darkMode() const { return m_darkMode; }
 QString AppController::exportMode() const { return m_exportEngine->exportMode(); }
 QString AppController::appVersion() const { return QCoreApplication::applicationVersion(); }
 
+QUrl AppController::videoUrl() const
+{
+    return m_sourcePath.isEmpty() ? QUrl() : QUrl::fromLocalFile(m_sourcePath);
+}
+
+qint64 AppController::durationMs() const
+{
+    const QJsonValue duration = m_metadataJson.value("duration_ms");
+    return duration.isNull() ? 0 : static_cast<qint64>(duration.toDouble());
+}
+
+QVariantList AppController::keyframesMs() const
+{
+    // Cap the markers handed to the QML timeline so dense keyframe sets stay
+    // cheap to render; subsample evenly when above the cap.
+    constexpr int kMaxMarkers = 500;
+    const int count = m_keyframes.size();
+    QVariantList list;
+    if (count <= kMaxMarkers) {
+        list.reserve(count);
+        for (const qint64 keyframe : m_keyframes) {
+            list.push_back(QVariant::fromValue(keyframe));
+        }
+    } else {
+        list.reserve(kMaxMarkers);
+        for (int i = 0; i < kMaxMarkers; ++i) {
+            const int index = static_cast<int>(static_cast<qint64>(i) * (count - 1) / (kMaxMarkers - 1));
+            list.push_back(QVariant::fromValue(m_keyframes.at(index)));
+        }
+    }
+    return list;
+}
+
+qint64 AppController::inMs() const { return m_hasPendingIn ? m_pendingIn : -1; }
+qint64 AppController::outMs() const { return m_hasPendingOut ? m_pendingOut : -1; }
+
 void AppController::openSource()
 {
     if (m_exportEngine->busy()) {
@@ -192,6 +234,9 @@ void AppController::openSourcePath(const QString &path)
     setSourcePath(path);
     m_recentSources->prepend(path);
     clearMediaState();
+    if (m_probeEngine->ffprobeReady()) {
+        setProbing(true);
+    }
     m_probeEngine->probeSource(path);
 }
 
@@ -526,6 +571,7 @@ void AppController::setIn()
     m_pendingIn = currentKeyframeMs();
     m_hasPendingIn = true;
     emit markersChanged();
+    generateThumbnail(m_pendingIn, true);
 }
 
 void AppController::setOut()
@@ -537,6 +583,7 @@ void AppController::setOut()
     m_pendingOut = currentKeyframeMs();
     m_hasPendingOut = true;
     emit markersChanged();
+    generateThumbnail(m_pendingOut, false);
 }
 
 void AppController::addSegment(const QString &name, const QString &notes)
@@ -731,9 +778,14 @@ void AppController::clearMediaState()
     m_codecText = tr("N/A");
     m_sizeText = tr("N/A");
     m_mediaSummary = tr("Open a video to inspect stream-copy-safe keyframes.");
+    m_inThumbUrl = QUrl();
+    m_outThumbUrl = QUrl();
+    m_inThumbFile.clear();
+    m_outThumbFile.clear();
     emit metadataChanged();
     emit keyframesChanged();
     emit markersChanged();
+    emit thumbnailsChanged();
 }
 
 void AppController::applyMetadata(const QJsonObject &metadata, const QJsonArray &keyframes)
@@ -833,9 +885,20 @@ void AppController::refreshFfmpegVersion()
 void AppController::applyCustomFfmpegDirToEnvironment()
 {
     static QString s_originalPath;
+    static QString s_appliedCustomDir;
     if (s_originalPath.isNull()) {
         s_originalPath = qEnvironmentVariable("PATH");
     }
+    if (m_customFfmpegDir == s_appliedCustomDir) {
+        // PATH already reflects this setting -- skip qputenv. Rewriting the
+        // process-wide environment on every construction (even as a no-op)
+        // races with ProbeEngine::recheckBackground()'s worker threads, which
+        // read that same environment via QProcess::start. Constructing many
+        // AppControllers back to back (as the test suite does) turns that
+        // race into a near-guaranteed crash on Windows.
+        return;
+    }
+    s_appliedCustomDir = m_customFfmpegDir;
     QString path = s_originalPath;
     if (!m_customFfmpegDir.isEmpty()) {
         const QChar sep = QDir::listSeparator();
@@ -881,4 +944,128 @@ bool AppController::overwriteApprovedForSessionForTesting() const
 void AppController::setKeyframesForTesting(const QVector<qint64> &keyframes)
 {
     m_keyframes = keyframes;
+}
+
+qint64 AppController::snapToKeyframe(qint64 ms)
+{
+    if (m_keyframes.isEmpty()) {
+        return ms;
+    }
+    const QJsonObject snap = RustBridge::nearestKeyframe(keyframesJson(), ms);
+    if (!snap.value("ok").toBool()) {
+        return ms;
+    }
+    const qint64 snapped = static_cast<qint64>(snap.value("snap").toObject().value("snapped_ms").toDouble());
+    const auto it = std::lower_bound(m_keyframes.begin(), m_keyframes.end(), snapped);
+    if (it != m_keyframes.end() && *it == snapped) {
+        m_currentIndex = static_cast<int>(std::distance(m_keyframes.begin(), it));
+        emit keyframesChanged();
+    }
+    return snapped;
+}
+
+void AppController::dismissNotice()
+{
+    setNotice(QString(), QString());
+}
+
+bool AppController::outputExists() const
+{
+    return !m_outputPath.isEmpty() && QFileInfo::exists(m_outputPath);
+}
+
+void AppController::setNotice(const QString &text, const QString &tone)
+{
+    if (m_noticeText == text && m_noticeTone == tone) {
+        return;
+    }
+    m_noticeText = text;
+    m_noticeTone = tone;
+    emit noticeChanged();
+}
+
+void AppController::setProbing(bool probing)
+{
+    if (m_probing == probing) {
+        return;
+    }
+    m_probing = probing;
+    emit probingChanged();
+}
+
+QString AppController::ensureThumbDir()
+{
+    if (!m_thumbDirPath.isEmpty()) {
+        return m_thumbDirPath;
+    }
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    if (base.isEmpty()) {
+        return QString();
+    }
+    QDir dir(base);
+    const QString sub = QStringLiteral("seder-rewrap-thumbs-%1").arg(QCoreApplication::applicationPid());
+    if (!dir.exists(sub) && !dir.mkpath(sub)) {
+        return QString();
+    }
+    m_thumbDirPath = dir.filePath(sub);
+    return m_thumbDirPath;
+}
+
+void AppController::generateThumbnail(qint64 timeMs, bool isIn)
+{
+    if (!m_probeEngine->ffmpegReady() || m_sourcePath.isEmpty()) {
+        return;
+    }
+    const QString thumbDir = ensureThumbDir();
+    if (thumbDir.isEmpty()) {
+        return;
+    }
+    const QString source = m_sourcePath;
+    const QString outFile = QStringLiteral("%1/%2-%3.png")
+                                .arg(thumbDir, isIn ? QStringLiteral("in") : QStringLiteral("out"))
+                                .arg(timeMs);
+
+    const QJsonObject reply = RustBridge::ffmpegThumbnailCommand(source, timeMs, outFile);
+    if (!reply.value("ok").toBool()) {
+        return;
+    }
+    const RustBridge::Command command = RustBridge::commandFromJson(reply.value("command").toObject());
+
+    QPointer<AppController> self(this);
+    QThread *worker = QThread::create([self, command, source, timeMs, outFile, isIn] {
+        const ProcessResult result = ProcessUtil::runCommand(command.program, command.args);
+        if (!self) {
+            return;
+        }
+        QMetaObject::invokeMethod(self.data(), [self, result, source, timeMs, outFile, isIn] {
+            if (!self) {
+                return;
+            }
+            // Staleness guard: drop the frame if the source changed or the
+            // marker moved while ffmpeg was decoding.
+            if (self->m_sourcePath != source) {
+                return;
+            }
+            if (isIn && (!self->m_hasPendingIn || self->m_pendingIn != timeMs)) {
+                return;
+            }
+            if (!isIn && (!self->m_hasPendingOut || self->m_pendingOut != timeMs)) {
+                return;
+            }
+            if (!result.ok || !QFileInfo::exists(outFile)) {
+                return;
+            }
+            const QUrl url = QUrl::fromLocalFile(outFile);
+            if (isIn) {
+                self->m_inThumbFile = outFile;
+                self->m_inThumbUrl = url;
+            } else {
+                self->m_outThumbFile = outFile;
+                self->m_outThumbUrl = url;
+            }
+            emit self->thumbnailsChanged();
+        }, Qt::QueuedConnection);
+    });
+    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+    worker->start();
 }

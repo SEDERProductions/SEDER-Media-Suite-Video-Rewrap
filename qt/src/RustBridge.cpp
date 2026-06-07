@@ -74,6 +74,17 @@ QJsonObject RustBridge::invokeQStrI64(FfiCallQStr1I64 call, const QString &value
     return decode(call(v.constData(), number));
 }
 
+QJsonObject RustBridge::invokeQStrI64QStr(
+    FfiCallQStr1I64QStr1 call,
+    const QString &first,
+    qint64 number,
+    const QString &second)
+{
+    const QByteArray a = utf8(first);
+    const QByteArray b = utf8(second);
+    return decode(call(a.constData(), number, b.constData()));
+}
+
 QJsonObject RustBridge::invokeQStrU64QStrQStr(
     FfiCallQStr1U64QStr2 call,
     const QString &first,
@@ -133,6 +144,11 @@ QJsonObject RustBridge::ffprobeKeyframeCommand(const QString &source)
 QJsonObject RustBridge::ffplayPreviewCommand(const QString &source, qint64 startMs)
 {
     return invokeQStrI64(svr_ffplay_preview_command, source, startMs);
+}
+
+QJsonObject RustBridge::ffmpegThumbnailCommand(const QString &source, qint64 timeMs, const QString &output)
+{
+    return invokeQStrI64QStr(svr_ffmpeg_thumbnail_command, source, timeMs, output);
 }
 
 QJsonObject RustBridge::parseProbeResult(

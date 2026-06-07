@@ -13,6 +13,8 @@
 #include <QObject>
 #include <QString>
 #include <QUndoStack>
+#include <QUrl>
+#include <QVariantList>
 #include <QVector>
 #include <functional>
 
@@ -54,6 +56,17 @@ class AppController : public QObject, public SegmentCommandContext
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY undoStackChanged)
     Q_PROPERTY(bool canRedo READ canRedo NOTIFY undoStackChanged)
     Q_PROPERTY(QString appVersion READ appVersion CONSTANT)
+    Q_PROPERTY(QUrl videoUrl READ videoUrl NOTIFY sourcePathChanged)
+    Q_PROPERTY(qint64 durationMs READ durationMs NOTIFY metadataChanged)
+    Q_PROPERTY(QVariantList keyframesMs READ keyframesMs NOTIFY keyframesChanged)
+    Q_PROPERTY(qint64 currentKeyframeMs READ currentKeyframeMs NOTIFY keyframesChanged)
+    Q_PROPERTY(qint64 inMs READ inMs NOTIFY markersChanged)
+    Q_PROPERTY(qint64 outMs READ outMs NOTIFY markersChanged)
+    Q_PROPERTY(QUrl inThumbUrl READ inThumbUrl NOTIFY thumbnailsChanged)
+    Q_PROPERTY(QUrl outThumbUrl READ outThumbUrl NOTIFY thumbnailsChanged)
+    Q_PROPERTY(QString noticeText READ noticeText NOTIFY noticeChanged)
+    Q_PROPERTY(QString noticeTone READ noticeTone NOTIFY noticeChanged)
+    Q_PROPERTY(bool probing READ probing NOTIFY probingChanged)
 
 public:
     explicit AppController(SegmentTableModel *segments, QObject *parent = nullptr);
@@ -93,6 +106,16 @@ public:
     bool canUndo() const { return m_undo.canUndo(); }
     bool canRedo() const { return m_undo.canRedo(); }
     QString appVersion() const;
+    QUrl videoUrl() const;
+    qint64 durationMs() const;
+    QVariantList keyframesMs() const;
+    qint64 inMs() const;
+    qint64 outMs() const;
+    QUrl inThumbUrl() const { return m_inThumbUrl; }
+    QUrl outThumbUrl() const { return m_outThumbUrl; }
+    QString noticeText() const { return m_noticeText; }
+    QString noticeTone() const { return m_noticeTone; }
+    bool probing() const { return m_probing; }
 
     Q_INVOKABLE void openSource();
     Q_INVOKABLE void openSourcePath(const QString &path);
@@ -128,6 +151,9 @@ public:
     Q_INVOKABLE void setCustomFfmpegDir(const QString &dir);
     Q_INVOKABLE void clearCustomFfmpegDir();
     Q_INVOKABLE void copyLastErrorLogToClipboard();
+    Q_INVOKABLE qint64 snapToKeyframe(qint64 ms);
+    Q_INVOKABLE void dismissNotice();
+    Q_INVOKABLE bool outputExists() const;
 
     bool ensureCanExportForTesting();
     void setPathsForTesting(const QString &source, const QString &output);
@@ -156,6 +182,9 @@ signals:
     void themeChanged();
     void exportModeChanged();
     void undoStackChanged();
+    void thumbnailsChanged();
+    void noticeChanged();
+    void probingChanged();
 
 private:
     void setSourcePath(const QString &path);
@@ -178,6 +207,10 @@ private:
         const QString &successLog);
     void refreshFfmpegVersion();
     void applyCustomFfmpegDirToEnvironment();
+    void setNotice(const QString &text, const QString &tone);
+    void setProbing(bool probing);
+    void generateThumbnail(qint64 timeMs, bool isIn);
+    QString ensureThumbDir();
 
     ProbeEngine *m_probeEngine = nullptr;
     ExportEngine *m_exportEngine = nullptr;
@@ -213,4 +246,12 @@ private:
     QString m_theme = "system";
     bool m_darkMode = true;
     QVector<qint64> m_previewPids;
+    QString m_noticeText;
+    QString m_noticeTone;
+    bool m_probing = false;
+    QUrl m_inThumbUrl;
+    QUrl m_outThumbUrl;
+    QString m_inThumbFile;
+    QString m_outThumbFile;
+    QString m_thumbDirPath;
 };

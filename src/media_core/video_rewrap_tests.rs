@@ -137,6 +137,24 @@ fn generates_ffmpeg_commands_without_shell_strings() {
 }
 
 #[test]
+fn ffmpeg_thumbnail_command_extracts_single_scaled_frame() {
+    let cmd = ffmpeg_thumbnail_command(
+        Path::new("/media/source.mov"),
+        2_000,
+        Path::new("/tmp/thumb.png"),
+    );
+    assert_eq!(cmd.program, "ffmpeg");
+    // Exactly one frame, scaled down, written to the requested path.
+    assert!(cmd.args.contains(&"-frames:v".to_string()));
+    assert!(cmd.args.contains(&"1".to_string()));
+    assert!(cmd.args.iter().any(|arg| arg.starts_with("scale=")));
+    assert!(cmd.args.contains(&"/tmp/thumb.png".to_string()));
+    // 2000 ms requests an input-side seek to 00:00:02.000.
+    assert!(cmd.args.contains(&"00:00:02.000".to_string()));
+    assert!(!cmd.args.join(" ").contains(';'));
+}
+
+#[test]
 fn generates_reports() {
     let segments = vec![mk_segment_with_notes("Moment", 1_000, 2_500, "keeper")];
     let txt = rewrap_report_txt(

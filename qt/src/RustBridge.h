@@ -18,6 +18,7 @@ public:
     static QJsonObject ffprobeMetadataCommand(const QString &source);
     static QJsonObject ffprobeKeyframeCommand(const QString &source);
     static QJsonObject ffplayPreviewCommand(const QString &source, qint64 startMs);
+    static QJsonObject ffmpegThumbnailCommand(const QString &source, qint64 timeMs, const QString &output);
     static QJsonObject parseProbeResult(
         const QString &source,
         quint64 fileSize,
@@ -60,6 +61,7 @@ private:
     using FfiCallQStr2Json1 = char *(*)(const char *, const char *, const char *);
     using FfiCallJson1I64 = char *(*)(const char *, qint64);
     using FfiCallQStr1I64 = char *(*)(const char *, qint64);
+    using FfiCallQStr1I64QStr1 = char *(*)(const char *, qint64, const char *);
     using FfiCallQStr1U64QStr2 = char *(*)(const char *, quint64, const char *, const char *);
     using FfiCallJson2 = char *(*)(const char *, const char *);
     using FfiCallQStr3Json2 = char *(*)(const char *, const char *, const char *, const char *, const char *);
@@ -74,6 +76,11 @@ private:
         const QJsonArray &array);
     static QJsonObject invokeJsonI64(FfiCallJson1I64 call, const QJsonArray &array, qint64 value);
     static QJsonObject invokeQStrI64(FfiCallQStr1I64 call, const QString &value, qint64 number);
+    static QJsonObject invokeQStrI64QStr(
+        FfiCallQStr1I64QStr1 call,
+        const QString &first,
+        qint64 number,
+        const QString &second);
     static QJsonObject invokeQStrU64QStrQStr(
         FfiCallQStr1U64QStr2 call,
         const QString &first,

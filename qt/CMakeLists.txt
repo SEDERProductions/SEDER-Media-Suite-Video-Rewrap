@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 Widgets Test)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Multimedia Network Qml Quick QuickControls2 Widgets Test)
 
 # Stamp PROJECT_VERSION into a header so every translation unit sees the same
 # string. configure_file is bulletproof across all CMake generators (Ninja,
@@ -74,6 +74,7 @@ target_include_directories(seder-video-rewrap PRIVATE
 target_link_libraries(seder-video-rewrap PRIVATE
     Qt6::Core
     Qt6::Gui
+    Qt6::Multimedia
     Qt6::Network
     Qt6::Qml
     Qt6::Quick
@@ -198,4 +199,9 @@ if(APPLE)
 endif()
 
 add_test(NAME app-controller-tests COMMAND app-controller-tests)
-set_tests_properties(app-controller-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+# Force the offscreen QPA platform and keep the AppController constructor from
+# firing a live update check: the launch-time QNetworkAccessManager request is
+# torn down with each short-lived test instance, which crashes the test process
+# on Windows (and is improper network I/O in a unit test regardless).
+set_tests_properties(app-controller-tests PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SEDER_DISABLE_UPDATE_CHECK=1")

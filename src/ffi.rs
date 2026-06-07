@@ -1,10 +1,10 @@
 use crate::media_core::video_rewrap::{
     evaluate_update, ffmpeg_compatibility, ffmpeg_concat_command, ffmpeg_segment_command,
-    ffplay_preview_command, ffprobe_keyframe_command, ffprobe_metadata_command, format_ms,
-    nearest_keyframe, output_extension, parse_ffprobe_keyframes, parse_ffprobe_metadata,
-    parse_project_json, parse_timecode_to_ms, rewrap_preflight, rewrap_report_csv,
-    rewrap_report_txt, temp_segment_path, validate_segments, ExportMode, RewrapProject,
-    RewrapSegment, VideoMetadata, CURRENT_PROJECT_VERSION,
+    ffmpeg_thumbnail_command, ffplay_preview_command, ffprobe_keyframe_command,
+    ffprobe_metadata_command, format_ms, nearest_keyframe, output_extension,
+    parse_ffprobe_keyframes, parse_ffprobe_metadata, parse_project_json, parse_timecode_to_ms,
+    rewrap_preflight, rewrap_report_csv, rewrap_report_txt, temp_segment_path, validate_segments,
+    ExportMode, RewrapProject, RewrapSegment, VideoMetadata, CURRENT_PROJECT_VERSION,
 };
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
@@ -116,6 +116,21 @@ pub extern "C" fn svr_ffplay_preview_command(source: *const c_char, start_ms: i6
     response((|| {
         let source = input(source, "source")?;
         Ok(json!({ "command": ffplay_preview_command(Path::new(&source), start_ms) }))
+    })())
+}
+
+#[no_mangle]
+pub extern "C" fn svr_ffmpeg_thumbnail_command(
+    source: *const c_char,
+    time_ms: i64,
+    output: *const c_char,
+) -> *mut c_char {
+    response((|| {
+        let source = input(source, "source")?;
+        let output = input(output, "output")?;
+        Ok(json!({
+            "command": ffmpeg_thumbnail_command(Path::new(&source), time_ms, Path::new(&output)),
+        }))
     })())
 }
 
@@ -422,6 +437,22 @@ mod tests {
             .unwrap()
             .iter()
             .any(|arg| arg == "/tmp/source.mov"));
+    }
+
+    #[test]
+    fn ffi_thumbnail_command_targets_output_image() {
+        let source = CString::new("/tmp/source.mov").unwrap();
+        let output = CString::new("/tmp/thumb.png").unwrap();
+        let parsed = call(svr_ffmpeg_thumbnail_command(
+            source.as_ptr(),
+            2_000,
+            output.as_ptr(),
+        ));
+        assert_eq!(parsed["ok"], true);
+        assert_eq!(parsed["command"]["program"], "ffmpeg");
+        let args = parsed["command"]["args"].as_array().unwrap();
+        assert!(args.iter().any(|arg| arg == "/tmp/thumb.png"));
+        assert!(args.iter().any(|arg| arg == "-frames:v"));
     }
 
     #[test]

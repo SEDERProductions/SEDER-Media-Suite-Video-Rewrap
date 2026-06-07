@@ -432,6 +432,29 @@ pub fn ffplay_preview_command(source: &Path, start_ms: i64) -> ProcessCommand {
     }
 }
 
+/// Build a command that extracts a single still frame at `time_ms` as an image.
+///
+/// Input-side `-ss` keeps extraction fast, and because IN/OUT markers are
+/// keyframe-aligned the seek lands on the intended frame. Used for the in-app
+/// IN/OUT preview thumbnails; the frame is scaled down to keep the file small.
+pub fn ffmpeg_thumbnail_command(source: &Path, time_ms: i64, output: &Path) -> ProcessCommand {
+    ProcessCommand {
+        program: "ffmpeg".into(),
+        args: vec![
+            "-y".into(),
+            "-ss".into(),
+            format_ms(time_ms),
+            "-i".into(),
+            source.to_string_lossy().to_string(),
+            "-frames:v".into(),
+            "1".into(),
+            "-vf".into(),
+            "scale=480:-1".into(),
+            output.to_string_lossy().to_string(),
+        ],
+    }
+}
+
 pub fn save_project(path: &Path, project: &RewrapProject) -> Result<()> {
     let json = serde_json::to_string_pretty(project)?;
     fs::write(path, json).with_context(|| format!("Unable to write {}", path.display()))
