@@ -199,4 +199,9 @@ if(APPLE)
 endif()
 
 add_test(NAME app-controller-tests COMMAND app-controller-tests)
-set_tests_properties(app-controller-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+# Force the offscreen QPA platform and keep the AppController constructor from
+# firing a live update check: the launch-time QNetworkAccessManager request is
+# torn down with each short-lived test instance, which crashes the test process
+# on Windows (and is improper network I/O in a unit test regardless).
+set_tests_properties(app-controller-tests PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SEDER_DISABLE_UPDATE_CHECK=1")
