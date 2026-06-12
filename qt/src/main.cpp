@@ -1,4 +1,5 @@
 #include "AppController.h"
+#include "FrameGrabber.h"
 #include "SegmentTableModel.h"
 #include "UiSettings.h"
 #include "seder_version.h"
@@ -43,6 +44,8 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("app"), &controller);
     engine.rootContext()->setContextProperty(QStringLiteral("segmentModel"), &segmentModel);
     engine.rootContext()->setContextProperty(QStringLiteral("uiSettings"), &uiSettings);
+    // Program monitor frames: serial-busted image://frame/<n> URLs.
+    engine.addImageProvider(QStringLiteral("frame"), new FrameImageProvider(controller.frameGrabber()));
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     QObject::connect(

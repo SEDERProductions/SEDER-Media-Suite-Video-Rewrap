@@ -59,9 +59,52 @@ Rectangle {
             Layout.fillHeight: true
             color: Theme.dark ? "#0a0a0a" : "#1a1a1a"
 
+            Image {
+                id: frame
+                anchors.fill: parent
+                anchors.margins: Theme.s3
+                fillMode: Image.PreserveAspectFit
+                cache: false
+                asynchronous: true
+                source: app.frameGrabber.hasFrame
+                    ? "image://frame/" + app.frameGrabber.frameSerial
+                    : ""
+                visible: app.frameGrabber.hasFrame
+            }
+
+            // Timecode overlay, bottom-left like a real program monitor.
+            Rectangle {
+                visible: app.frameGrabber.hasFrame
+                anchors.left: parent.left
+                anchors.bottom: parent.bottom
+                anchors.margins: Theme.s4
+                width: overlayTc.implicitWidth + Theme.s4
+                height: 22
+                radius: Theme.radius
+                color: "#b0000000"
+
+                STimecodeLabel {
+                    id: overlayTc
+                    anchors.centerIn: parent
+                    text: app.currentKeyframeText
+                    color: "#e8e2dc"
+                }
+            }
+
+            // Subtle activity bar while a grab is in flight.
+            SProgressBar {
+                visible: app.frameGrabber.grabbing
+                indeterminate: true
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                height: 2
+            }
+
             ColumnLayout {
                 anchors.centerIn: parent
                 spacing: Theme.s3
+                visible: !app.frameGrabber.hasFrame
 
                 SIcon {
                     name: "film"

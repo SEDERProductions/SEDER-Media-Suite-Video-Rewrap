@@ -53,6 +53,7 @@ qt_add_executable(seder-video-rewrap
     src/main.cpp
     src/AppController.cpp
     src/ExportEngine.cpp
+    src/FrameGrabber.cpp
     src/ProbeEngine.cpp
     src/ProcessUtil.cpp
     src/RecentFilesModel.cpp
@@ -210,6 +211,7 @@ qt_add_executable(app-controller-tests
     tests/AppControllerTests.cpp
     src/AppController.cpp
     src/ExportEngine.cpp
+    src/FrameGrabber.cpp
     src/ProbeEngine.cpp
     src/ProcessUtil.cpp
     src/RecentFilesModel.cpp
@@ -231,6 +233,8 @@ target_link_libraries(app-controller-tests PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Network
+    Qt6::Qml
+    Qt6::Quick
     Qt6::Widgets
     Qt6::Test
     ${RUST_CORE_LIBRARY}

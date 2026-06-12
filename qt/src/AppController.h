@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ExportEngine.h"
+#include "FrameGrabber.h"
 #include "ProbeEngine.h"
 #include "RecentFilesModel.h"
 #include "RustBridge.h"
@@ -25,6 +26,7 @@ class AppController : public QObject, public SegmentCommandContext
     Q_PROPERTY(RecentFilesModel *recentOutputs READ recentOutputs CONSTANT)
     Q_PROPERTY(RecentFilesModel *recentProjects READ recentProjects CONSTANT)
     Q_PROPERTY(UpdateChecker *updateChecker READ updateChecker CONSTANT)
+    Q_PROPERTY(FrameGrabber *frameGrabber READ frameGrabber CONSTANT)
     Q_PROPERTY(QString sourcePath READ sourcePath NOTIFY sourcePathChanged)
     Q_PROPERTY(QString outputPath READ outputPath NOTIFY outputPathChanged)
     Q_PROPERTY(QString logText READ logText NOTIFY logTextChanged)
@@ -72,6 +74,7 @@ public:
     RecentFilesModel *recentOutputs() const { return m_recentOutputs; }
     RecentFilesModel *recentProjects() const { return m_recentProjects; }
     UpdateChecker *updateChecker() const { return m_updateChecker; }
+    FrameGrabber *frameGrabber() const { return m_frameGrabber; }
     QString sourcePath() const;
     QString outputPath() const;
     QString logText() const;
@@ -212,6 +215,7 @@ private:
     RecentFilesModel *m_recentOutputs = nullptr;
     RecentFilesModel *m_recentProjects = nullptr;
     UpdateChecker *m_updateChecker = nullptr;
+    FrameGrabber *m_frameGrabber = nullptr;
     QUndoStack m_undo;
 
     QString m_sourcePath;

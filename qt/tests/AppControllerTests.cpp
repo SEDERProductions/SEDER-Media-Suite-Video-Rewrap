@@ -1,4 +1,5 @@
 #include "AppController.h"
+#include "FrameGrabber.h"
 #include "RecentFilesModel.h"
 #include "UpdateChecker.h"
 
@@ -460,6 +461,29 @@ private slots:
 
         ctrl.redo();
         QCOMPARE(model->segments().at(1).notes, QString("updated note"));
+    }
+
+    void frameGrabber_buildsExactFfmpegArguments()
+    {
+        const QStringList args = FrameGrabber::grabArguments(QStringLiteral("/tmp/in.mp4"), 2500);
+        const QStringList expected {
+            "-hide_banner",
+            "-loglevel", "error",
+            "-ss", "2.500",
+            "-i", "/tmp/in.mp4",
+            "-frames:v", "1",
+            "-vf", "scale=min(1280\\,iw):-2",
+            "-f", "image2pipe",
+            "-vcodec", "bmp",
+            "-",
+        };
+        QCOMPARE(args, expected);
+        // Fast seek requires -ss before -i.
+        QVERIFY(args.indexOf("-ss") < args.indexOf("-i"));
+
+        // Width override flows into the scale filter.
+        const QStringList smaller = FrameGrabber::grabArguments(QStringLiteral("a.mov"), 0, 640);
+        QVERIFY(smaller.contains(QStringLiteral("scale=min(640\\,iw):-2")));
     }
 
     void clearPendingMarkers_resetsBothMarkers()

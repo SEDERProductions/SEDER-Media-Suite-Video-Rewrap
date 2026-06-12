@@ -95,6 +95,13 @@ AppController::AppController(SegmentTableModel *segments, QObject *parent)
 {
     m_probeEngine = new ProbeEngine(this);
     m_exportEngine = new ExportEngine(this);
+    m_frameGrabber = new FrameGrabber(this);
+
+    // Every playhead move refreshes the program monitor; an empty
+    // keyframe list (media cleared) resets it instead.
+    connect(this, &AppController::positionMsChanged, this, [this] {
+        m_frameGrabber->requestFrame(m_sourcePath, m_keyframes.isEmpty() ? -1 : currentKeyframeMs());
+    });
 
     connect(m_probeEngine, &ProbeEngine::toolsChanged, this, [this] {
         refreshFfmpegVersion();
