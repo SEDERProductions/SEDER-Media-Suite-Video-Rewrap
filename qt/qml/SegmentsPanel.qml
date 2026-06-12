@@ -41,6 +41,27 @@ Item {
         return cachedColumnWidths[column] || 0
     }
 
+    // Inline editing target; delegates show an editor when they match.
+    property int editRow: -1
+    property int editColumn: -1
+
+    function commitEdit(row, column, value) {
+        if (column === 1)
+            app.renameSegment(row, value)
+        else if (column === 5)
+            app.setSegmentNotes(row, value)
+        editRow = -1
+        editColumn = -1
+    }
+
+    SegmentContextMenu {
+        id: rowMenu
+        onRenameRequested: (row) => {
+            panel.editRow = row
+            panel.editColumn = 1
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -182,30 +203,79 @@ Item {
                     visible: cell.selected && cell.column === 0
                 }
 
+                readonly property bool editing: cell.row === panel.editRow
+                    && cell.column === panel.editColumn
+
                 Text {
                     anchors.fill: parent
                     anchors.leftMargin: Theme.s3
                     anchors.rightMargin: Theme.s3
                     verticalAlignment: Text.AlignVCenter
+                    visible: cell.column !== 0 && !cell.editing
                     text: cell.display
-                    color: cell.column === 0 && cell.display === "OFF" ? Theme.faint : Theme.text
+                    color: Theme.text
                     font.family: cell.column >= 2 && cell.column <= 4 ? Theme.monoFont : Theme.uiFont
                     font.pixelSize: Theme.fontSizeSmall
                     elide: Text.ElideRight
-                    // `model.enabled` (not a required property) dodges the
-                    // Item.enabled name clash and stays reactive on toggle.
-                    opacity: cell.column !== 0 && model.enabled === false ? 0.45 : 1.0
+                    // `model.enabled` dodges the Item.enabled name clash
+                    // and stays reactive on toggle.
+                    opacity: cell.model.enabled === false ? 0.45 : 1.0
+                }
+
+                SCheckBox {
+                    visible: cell.column === 0
+                    anchors.centerIn: parent
+                    checked: cell.model.enabled === true
+                    Accessible.name: qsTr("Segment enabled")
+                    onToggled: app.toggleSegment(cell.row, checked)
                 }
 
                 MouseArea {
                     anchors.fill: parent
-                    onClicked: app.selectSegment(cell.row)
-                    onDoubleClicked: {
-                        // Double-click the On cell toggles the segment.
-                        if (cell.column === 0) {
-                            var idx = segmentModel.index(cell.row, 0)
-                            var enabled = segmentModel.data(idx, Qt.UserRole + 1)
-                            app.toggleSegment(cell.row, !enabled)
+                    visible: cell.column !== 0 && !cell.editing
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onPressed: (mouse) => {
+                        app.selectSegment(cell.row)
+                        if (mouse.button === Qt.RightButton) {
+                            rowMenu.targetRow = cell.row
+                            rowMenu.popup()
+                        }
+                    }
+                    onDoubleClicked: (mouse) => {
+                        if (mouse.button !== Qt.LeftButton) return
+                        if (cell.column === 1 || cell.column === 5) {
+                            panel.editRow = cell.row
+                            panel.editColumn = cell.column
+                        } else if (cell.column === 2) {
+                            app.seekToMs(cell.model.inMs)
+                        } else if (cell.column === 3) {
+                            app.seekToMs(cell.model.outMs)
+                        }
+                    }
+                }
+
+                // Inline editor for Name and Notes cells.
+                Loader {
+                    anchors.fill: parent
+                    active: cell.editing
+                    sourceComponent: SField {
+                        text: cell.display
+                        font.pixelSize: Theme.fontSizeSmall
+                        Accessible.name: cell.column === 1
+                            ? qsTr("Edit segment name") : qsTr("Edit segment notes")
+                        Component.onCompleted: {
+                            forceActiveFocus()
+                            selectAll()
+                        }
+                        onAccepted: panel.commitEdit(cell.row, cell.column, text)
+                        onActiveFocusChanged: {
+                            // Focus-out commits, Premiere-style.
+                            if (!activeFocus && cell.editing)
+                                panel.commitEdit(cell.row, cell.column, text)
+                        }
+                        Keys.onEscapePressed: {
+                            panel.editRow = -1
+                            panel.editColumn = -1
                         }
                     }
                 }

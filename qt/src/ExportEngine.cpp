@@ -206,6 +206,7 @@ void ExportEngine::startExport(
                         .arg(result.stderrText);
                     emit errorReport(details);
                     emit logMessage(summary);
+                    emit finished(false, QStringLiteral("Segment %1 export failed").arg(segmentIndex));
                 }, Qt::QueuedConnection);
                 return;
             }
@@ -260,6 +261,7 @@ void ExportEngine::startExport(
             if (result.ok) {
                 setProgress(1.0);
                 emit logMessage(QStringLiteral("Export complete: %1").arg(displayPath(outputPath)));
+                emit finished(true, QStringLiteral("Export complete"));
             } else {
                 setProgress(0.0);
                 const QString details = QStringLiteral(
@@ -270,6 +272,7 @@ void ExportEngine::startExport(
                 emit errorReport(details);
                 emit logMessage(QStringLiteral("Export failed. No re-encode fallback was attempted.\n%1")
                     .arg(result.stderrText));
+                emit finished(false, QStringLiteral("Export failed"));
             }
         }, Qt::QueuedConnection);
     });

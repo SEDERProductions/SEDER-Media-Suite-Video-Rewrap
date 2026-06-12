@@ -358,48 +358,11 @@ Item {
     }
 
     // ---- Clip context menu ----
-    SMenu {
+    SegmentContextMenu {
         id: clipMenu
-        property int targetRow: -1
-
-        SMenuItem {
-            text: qsTr("Rename…")
-            onTriggered: {
-                renamePopup.row = clipMenu.targetRow
-                renamePopup.open()
-            }
-        }
-        SMenuItem {
-            text: qsTr("Duplicate")
-            onTriggered: app.duplicateSegment(clipMenu.targetRow)
-        }
-        SMenuItem {
-            text: {
-                var idx = segmentModel.index(clipMenu.targetRow, 0)
-                segmentModel.data(idx, Qt.UserRole + 1) === false ? qsTr("Enable") : qsTr("Disable")
-            }
-            onTriggered: {
-                var idx = segmentModel.index(clipMenu.targetRow, 0)
-                var enabled = segmentModel.data(idx, Qt.UserRole + 1)
-                app.toggleSegment(clipMenu.targetRow, !enabled)
-            }
-        }
-        SMenuSeparator { }
-        SMenuItem {
-            text: qsTr("Move Earlier")
-            enabled: clipMenu.targetRow > 0
-            onTriggered: app.moveSegmentUp(clipMenu.targetRow)
-        }
-        SMenuItem {
-            text: qsTr("Move Later")
-            enabled: clipMenu.targetRow >= 0 && clipMenu.targetRow + 1 < segmentModel.rowCount()
-            onTriggered: app.moveSegmentDown(clipMenu.targetRow)
-        }
-        SMenuSeparator { }
-        SMenuItem {
-            text: qsTr("Delete")
-            shortcutText: qsTr("Del")
-            onTriggered: app.removeSegment(clipMenu.targetRow)
+        onRenameRequested: (row) => {
+            renamePopup.row = row
+            renamePopup.open()
         }
     }
 

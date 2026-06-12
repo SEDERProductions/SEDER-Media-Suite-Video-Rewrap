@@ -129,6 +129,9 @@ AppController::AppController(SegmentTableModel *segments, QObject *parent)
     });
     connect(m_exportEngine, &ExportEngine::logMessage, this, &AppController::setLogText);
     connect(m_exportEngine, &ExportEngine::errorReport, this, &AppController::setLastErrorLog);
+    connect(m_exportEngine, &ExportEngine::finished, this, [this](bool ok, const QString &message) {
+        emit toastRequested(message, ok ? QStringLiteral("success") : QStringLiteral("error"));
+    });
 
     connect(&m_undo, &QUndoStack::canUndoChanged, this, [this] { emit undoStackChanged(); });
     connect(&m_undo, &QUndoStack::canRedoChanged, this, [this] { emit undoStackChanged(); });
@@ -258,6 +261,7 @@ void AppController::openProjectPath(const QString &path)
     }
     m_recentProjects->prepend(path);
     setLogText(tr("Project loaded: %1").arg(QDir::toNativeSeparators(path)));
+    emit toastRequested(tr("Project loaded"), QStringLiteral("success"));
 }
 
 void AppController::setOutputFromPath(const QString &path)
@@ -341,6 +345,7 @@ bool AppController::runExportFlow(
         m_recentProjects->prepend(path);
     }
     setLogText(QStringLiteral("%1: %2").arg(successLog, QDir::toNativeSeparators(path)));
+    emit toastRequested(successLog, QStringLiteral("success"));
     return true;
 }
 

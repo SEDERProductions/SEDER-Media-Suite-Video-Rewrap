@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+Complete UI overhaul: a Premiere-style charcoal workspace with a visual
+timeline and a live program monitor.
+
+### Added
+- Visual timeline: segments render as clips on a zoomable, scrollable
+  track with an adaptive time ruler, keyframe ticks, and the pending
+  IN/OUT range. Scrub by pressing anywhere (snaps to keyframes), retrim
+  by dragging clip edges (snaps to keyframes, single undo entry), and
+  manage clips from a right-click context menu. Zoom with Ctrl+wheel,
+  the slider, `+` / `-`, or Fit; Home / End jump to the first / last
+  keyframe.
+- Program monitor: the frame under the playhead is extracted with the
+  already-required ffmpeg (no new dependencies) and shown letterboxed
+  with a timecode overlay. Scrubbing is debounced, superseded grabs are
+  cancelled, and recent frames are cached so keyframe stepping is
+  instant. FFplay remains the audio/full-speed preview.
+- Premiere-style workspace: Project and Export panel tabs on the left,
+  the monitor with a transport bar in the center, Timeline and Segments
+  tabs at the bottom, all in resizable split views that persist their
+  sizes, active tabs, and window geometry between sessions.
+- Welcome screen with a drop hint and recent videos / projects when no
+  media is open, plus an accent drop-target overlay during drag-and-drop.
+- Segments table polish: enable checkboxes, double-click inline editing
+  for name and notes (undoable), double-click In / Out cells to seek,
+  and the shared segment context menu on rows.
+- Toast notifications for project save / load, report export, and
+  export completion or failure.
+- Keyboard shortcut cheat sheet (Help → Keyboard Shortcuts…, Ctrl+/).
+- Design system: charcoal dark-first theme with the SEDER rust accent
+  and a redesigned light theme; tooltips show shortcut hints.
+- Undoable segment rename, notes editing, and retrimming APIs with test
+  coverage.
+
+### Fixed
+- The app failed to load on Qt 6.4 (the stated minimum): required
+  `display` delegate properties had no matching model role, and the
+  recent-file menu delegates overrode the FINAL
+  `AbstractButton.display` property.
+- "System" theme now follows the OS light/dark scheme (live on
+  Qt 6.5+, palette heuristic on 6.4) instead of always picking light.
+
 ## 1.0.0
 
 First stable release of SEDER Video Rewrap. Highlights since 0.1.x:

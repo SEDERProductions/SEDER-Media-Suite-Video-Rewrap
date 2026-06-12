@@ -81,12 +81,12 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Shift+O";            onActivated: app.loadProject() }
     Shortcut { sequence: StandardKey.Save;          onActivated: app.saveProject() }
     Shortcut { sequence: "Ctrl+E";                  onActivated: app.startExport() }
-    Shortcut { sequence: StandardKey.Undo;          onActivated: app.undo() }
+    Shortcut { sequences: [StandardKey.Undo];       onActivated: app.undo() }
     Shortcut { sequence: StandardKey.Redo;          onActivated: app.redo() }
     Shortcut { sequence: "Ctrl+Shift+Z";            onActivated: app.redo() }
     Shortcut { sequence: "Ctrl+/";                  onActivated: shortcutsDialog.open() }
     Shortcut {
-        sequence: StandardKey.Delete
+        sequences: [StandardKey.Delete]
         enabled: !root.isTextInputFocused()
         onActivated: if (app.selectedRow >= 0) app.removeSegment(app.selectedRow)
     }
@@ -311,5 +311,14 @@ ApplicationWindow {
         function onLastErrorLogChanged() {
             if (app.lastErrorLog.length > 0) errorDialog.open()
         }
+        function onToastRequested(message, tone) {
+            toastHost.show(message, tone)
+        }
+    }
+
+    ToastHost {
+        id: toastHost
+        anchors.fill: parent
+        z: 90
     }
 }

@@ -151,6 +151,7 @@ qt_add_qml_module(seder-video-rewrap
         qml/TimelineView.qml
         qml/TimelineClip.qml
         qml/SegmentsPanel.qml
+        qml/SegmentContextMenu.qml
         qml/AboutDialog.qml
         qml/FfmpegSettingsDialog.qml
         qml/ErrorLogDialog.qml
