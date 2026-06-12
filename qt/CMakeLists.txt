@@ -146,6 +146,9 @@ qt_add_qml_module(seder-video-rewrap
         qml/ExportPanel.qml
         qml/MonitorPanel.qml
         qml/TransportBar.qml
+        qml/TimelinePanel.qml
+        qml/TimelineView.qml
+        qml/TimelineClip.qml
         qml/SegmentsPanel.qml
         qml/AboutDialog.qml
         qml/FfmpegSettingsDialog.qml

@@ -51,6 +51,7 @@ ApplicationWindow {
         if (main)
             mainSplit.restoreState(main)
         leftTabs.currentIndex = uiSettings.value("leftTabIndex", 0)
+        bottomTabs.currentIndex = uiSettings.value("bottomTabIndex", 0)
     }
 
     onClosing: {
@@ -59,6 +60,7 @@ ApplicationWindow {
         uiSettings.setValue("upperSplitState", upperSplit.saveState())
         uiSettings.setValue("mainSplitState", mainSplit.saveState())
         uiSettings.setValue("leftTabIndex", leftTabs.currentIndex)
+        uiSettings.setValue("bottomTabIndex", bottomTabs.currentIndex)
     }
 
     // True while a text input owns focus. Single-letter and bare-Delete
@@ -128,6 +130,26 @@ ApplicationWindow {
         sequence: "."
         enabled: !root.isTextInputFocused()
         onActivated: app.nextKeyframe()
+    }
+    Shortcut {
+        sequence: "Home"
+        enabled: !root.isTextInputFocused()
+        onActivated: app.seekToMs(0)
+    }
+    Shortcut {
+        sequence: "End"
+        enabled: !root.isTextInputFocused()
+        onActivated: app.seekToMs(app.durationMs)
+    }
+    Shortcut {
+        sequence: "+"
+        enabled: !root.isTextInputFocused()
+        onActivated: timelinePanel.zoomIn()
+    }
+    Shortcut {
+        sequence: "-"
+        enabled: !root.isTextInputFocused()
+        onActivated: timelinePanel.zoomOut()
     }
 
     // ---- Menu bar ----
@@ -209,10 +231,11 @@ ApplicationWindow {
 
         SPanelTabs {
             id: bottomTabs
-            SplitView.preferredHeight: 240
-            SplitView.minimumHeight: 160
-            titles: [qsTr("Segments")]
+            SplitView.preferredHeight: 250
+            SplitView.minimumHeight: 170
+            titles: [qsTr("Timeline"), qsTr("Segments")]
 
+            TimelinePanel { id: timelinePanel }
             SegmentsPanel { }
         }
     }

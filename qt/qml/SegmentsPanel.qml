@@ -165,6 +165,9 @@ Item {
                 required property int row
                 required property int column
                 required property string display
+                // Declaring any required property turns off context-property
+                // injection, so the model object must be required too.
+                required property var model
                 readonly property bool selected: row === app.selectedRow
 
                 color: selected ? Theme.selectionBg

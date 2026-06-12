@@ -546,7 +546,9 @@ void AppController::setCurrentIndex(int index)
         return;
     }
     m_currentIndex = clamped;
-    emit keyframesChanged();
+    // keyframesChanged is reserved for actual list changes; position
+    // moves are cheap and frequent (scrubbing), so they get their own
+    // signal and QML never re-reads the keyframe list for them.
     emit positionMsChanged();
 }
 

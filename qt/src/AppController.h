@@ -44,7 +44,7 @@ class AppController : public QObject, public SegmentCommandContext
     Q_PROPERTY(QString sizeText READ sizeText NOTIFY metadataChanged)
     Q_PROPERTY(QString mediaSummary READ mediaSummary NOTIFY metadataChanged)
     Q_PROPERTY(int keyframeCount READ keyframeCount NOTIFY keyframesChanged)
-    Q_PROPERTY(QString currentKeyframeText READ currentKeyframeText NOTIFY keyframesChanged)
+    Q_PROPERTY(QString currentKeyframeText READ currentKeyframeText NOTIFY positionMsChanged)
     Q_PROPERTY(qint64 durationMs READ durationMs NOTIFY metadataChanged)
     Q_PROPERTY(qint64 positionMs READ positionMs NOTIFY positionMsChanged)
     Q_PROPERTY(int currentKeyframeIndex READ currentKeyframeIndex NOTIFY positionMsChanged)
