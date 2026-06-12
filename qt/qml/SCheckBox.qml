@@ -33,7 +33,7 @@ CheckBox {
             width: 11
             height: 11
             name: "check"
-            color: Theme.onAccent
+            color: Theme.textOnAccent
             visible: control.checked
         }
     }

@@ -14,7 +14,7 @@ TextField {
 
     color: enabled ? Theme.text : Theme.textDisabled
     placeholderTextColor: Theme.faint
-    selectedTextColor: Theme.onAccent
+    selectedTextColor: Theme.textOnAccent
     selectionColor: Theme.accent
     font.pixelSize: Theme.fontSizeBody
     font.family: mono ? Theme.monoFont : Theme.uiFont

@@ -1,5 +1,6 @@
 #include "AppController.h"
 #include "SegmentTableModel.h"
+#include "UiSettings.h"
 #include "seder_version.h"
 
 #include <QApplication>
@@ -30,6 +31,7 @@ int main(int argc, char *argv[])
 
     SegmentTableModel segmentModel;
     AppController controller(&segmentModel);
+    UiSettings uiSettings;
 
     app.setWindowIcon(QIcon(QStringLiteral(":/branding/icon-64.png")));
 
@@ -40,6 +42,7 @@ int main(int argc, char *argv[])
     engine.addImportPath(QStringLiteral(":/qt/qml"));
     engine.rootContext()->setContextProperty(QStringLiteral("app"), &controller);
     engine.rootContext()->setContextProperty(QStringLiteral("segmentModel"), &segmentModel);
+    engine.rootContext()->setContextProperty(QStringLiteral("uiSettings"), &uiSettings);
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     QObject::connect(

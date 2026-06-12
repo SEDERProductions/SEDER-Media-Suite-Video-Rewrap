@@ -59,6 +59,7 @@ qt_add_executable(seder-video-rewrap
     src/RustBridge.cpp
     src/SegmentCommands.cpp
     src/SegmentTableModel.cpp
+    src/UiSettings.cpp
     src/UpdateChecker.cpp
     ${SEDER_APP_PLATFORM_SOURCES}
 )
@@ -136,6 +137,20 @@ qt_add_qml_module(seder-video-rewrap
         qml/SDialog.qml
         qml/SToast.qml
         qml/ToastHost.qml
+        qml/AppMenuBar.qml
+        qml/HeaderBar.qml
+        qml/UpdateBanner.qml
+        qml/StatusBar.qml
+        qml/WelcomeView.qml
+        qml/ProjectPanel.qml
+        qml/ExportPanel.qml
+        qml/MonitorPanel.qml
+        qml/TransportBar.qml
+        qml/SegmentsPanel.qml
+        qml/AboutDialog.qml
+        qml/FfmpegSettingsDialog.qml
+        qml/ErrorLogDialog.qml
+        qml/ShortcutsDialog.qml
 )
 
 qt_add_resources(seder-video-rewrap "branding"

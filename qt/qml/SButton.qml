@@ -13,7 +13,7 @@ Button {
 
     readonly property color labelColor: !enabled
         ? Theme.textDisabled
-        : (primary || danger) ? Theme.onAccent : Theme.text
+        : (primary || danger) ? Theme.textOnAccent : Theme.text
 
     implicitHeight: 28
     implicitWidth: Math.max(contentRow.implicitWidth + leftPadding + rightPadding, 64)

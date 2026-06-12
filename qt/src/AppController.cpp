@@ -131,6 +131,11 @@ AppController::AppController(SegmentTableModel *segments, QObject *parent)
     m_customFfmpegDir = settings.value(kCustomFfmpegDirKey).toString();
     applyCustomFfmpegDirToEnvironment();
     setTheme(m_theme);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    // Follow live OS light/dark switches while theme is "system".
+    connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged,
+        this, [this] { setTheme(m_theme); });
+#endif
     m_probeEngine->recheckBackground();
 
     if (m_updateChecker->checkOnLaunch() && qEnvironmentVariableIsEmpty("SEDER_DISABLE_UPDATE_CHECK")) {
@@ -612,10 +617,23 @@ void AppController::toggleSegment(int row, bool enabled)
     m_undo.push(new ToggleSegmentCommand(m_segments, this, row, enabled));
 }
 
+namespace {
+bool systemPrefersDark()
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    const Qt::ColorScheme scheme = QGuiApplication::styleHints()->colorScheme();
+    if (scheme == Qt::ColorScheme::Light) return false;
+    if (scheme == Qt::ColorScheme::Dark) return true;
+#endif
+    // Palette luminance fallback; "unknown" leans dark, the design target.
+    return QGuiApplication::palette().color(QPalette::Window).lightness() < 140;
+}
+}
+
 void AppController::setTheme(const QString &theme)
 {
     const QString normalized = (theme == "light" || theme == "dark") ? theme : QStringLiteral("system");
-    const bool dark = normalized == "dark";
+    const bool dark = normalized == "dark" || (normalized == QStringLiteral("system") && systemPrefersDark());
     const bool changed = normalized != m_theme || dark != m_darkMode;
     m_theme = normalized;
     m_darkMode = dark;

@@ -35,7 +35,7 @@ MenuItem {
                     width: 11
                     height: 11
                     name: "check"
-                    color: control.highlighted ? Theme.onAccent : Theme.accentHover
+                    color: control.highlighted ? Theme.textOnAccent : Theme.accentHover
                     visible: control.checked
                 }
             }
@@ -44,7 +44,7 @@ MenuItem {
                 text: control.text
                 font: control.font
                 color: !control.enabled ? Theme.textDisabled
-                    : control.highlighted ? Theme.onAccent : Theme.text
+                    : control.highlighted ? Theme.textOnAccent : Theme.text
                 anchors.verticalCenter: parent.verticalCenter
             }
         }
@@ -68,7 +68,7 @@ MenuItem {
                 name: "chevronRight"
                 width: 11
                 height: 11
-                color: control.highlighted ? Theme.onAccent : Theme.muted
+                color: control.highlighted ? Theme.textOnAccent : Theme.muted
                 anchors.verticalCenter: parent.verticalCenter
             }
         }

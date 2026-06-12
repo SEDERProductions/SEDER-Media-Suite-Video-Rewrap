@@ -78,6 +78,9 @@ QVariant SegmentTableModel::headerData(int section, Qt::Orientation orientation,
 QHash<int, QByteArray> SegmentTableModel::roleNames() const
 {
     return {
+        // Qt 6.4 fails delegate incubation when a required `display`
+        // property has no matching role, so expose it explicitly.
+        { Qt::DisplayRole, "display" },
         { EnabledRole, "enabled" },
         { NameRole, "name" },
         { InMsRole, "inMs" },

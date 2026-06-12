@@ -31,7 +31,7 @@ QtObject {
     readonly property color accentHover: "#d94f24"
     readonly property color accentActive: "#a93210"
     readonly property color selectionBg: Qt.rgba(0.776, 0.231, 0.075, 0.30)
-    readonly property color onAccent: "#ffffff"
+    readonly property color textOnAccent: "#ffffff"
 
     // ---- Semantic ----
     readonly property color good: dark ? "#6fbf73" : "#2e7d32"
