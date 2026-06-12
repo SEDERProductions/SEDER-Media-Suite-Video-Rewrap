@@ -102,12 +102,46 @@ if(APPLE)
     )
 endif()
 
+# Theme and Icons are QML singletons: pragma Singleton in the file plus
+# this source property (which writes the singleton line into the
+# generated qmldir) are BOTH required on Qt 6.4.
+set_source_files_properties(qml/Theme.qml qml/Icons.qml PROPERTIES
+    QT_QML_SINGLETON_TYPE TRUE
+)
+
 qt_add_qml_module(seder-video-rewrap
     URI Seder.VideoRewrap
     VERSION 1.0
     RESOURCE_PREFIX "/qt/qml"
     QML_FILES
         qml/Main.qml
+        qml/Theme.qml
+        qml/Icons.qml
+        qml/SIcon.qml
+        qml/SButton.qml
+        qml/SIconButton.qml
+        qml/SCheckBox.qml
+        qml/SField.qml
+        qml/SSlider.qml
+        qml/SScrollBar.qml
+        qml/SProgressBar.qml
+        qml/SPill.qml
+        qml/SToolTip.qml
+        qml/STimecodeLabel.qml
+        qml/SPanel.qml
+        qml/SPanelTabs.qml
+        qml/SMenu.qml
+        qml/SMenuItem.qml
+        qml/SMenuSeparator.qml
+        qml/SDialog.qml
+        qml/SToast.qml
+        qml/ToastHost.qml
+)
+
+qt_add_resources(seder-video-rewrap "branding"
+    PREFIX "/branding"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/../assets"
+    FILES "${CMAKE_CURRENT_SOURCE_DIR}/../assets/icon-64.png"
 )
 
 if(Qt6_VERSION VERSION_GREATER_EQUAL "6.5.0")

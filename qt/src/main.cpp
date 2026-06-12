@@ -4,6 +4,7 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
@@ -30,7 +31,13 @@ int main(int argc, char *argv[])
     SegmentTableModel segmentModel;
     AppController controller(&segmentModel);
 
+    app.setWindowIcon(QIcon(QStringLiteral(":/branding/icon-64.png")));
+
     QQmlApplicationEngine engine;
+    // Qt 6.4 does not search :/qt/qml by default (6.5+ does), and the QML
+    // files import their own module explicitly to resolve the Theme/Icons
+    // singletons — so the module must be findable on the import path.
+    engine.addImportPath(QStringLiteral(":/qt/qml"));
     engine.rootContext()->setContextProperty(QStringLiteral("app"), &controller);
     engine.rootContext()->setContextProperty(QStringLiteral("segmentModel"), &segmentModel);
 
