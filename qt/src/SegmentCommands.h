@@ -83,3 +83,51 @@ private:
     bool m_newEnabled;
     bool m_previousEnabled;
 };
+
+class RenameSegmentCommand : public QUndoCommand
+{
+public:
+    RenameSegmentCommand(SegmentTableModel *model, SegmentCommandContext *ctx, int row, const QString &name);
+    void undo() override;
+    void redo() override;
+
+private:
+    SegmentTableModel *m_model;
+    SegmentCommandContext *m_ctx;
+    int m_row;
+    QString m_newName;
+    QString m_previousName;
+};
+
+class SetSegmentNotesCommand : public QUndoCommand
+{
+public:
+    SetSegmentNotesCommand(SegmentTableModel *model, SegmentCommandContext *ctx, int row, const QString &notes);
+    void undo() override;
+    void redo() override;
+
+private:
+    SegmentTableModel *m_model;
+    SegmentCommandContext *m_ctx;
+    int m_row;
+    QString m_newNotes;
+    QString m_previousNotes;
+};
+
+class SetSegmentBoundsCommand : public QUndoCommand
+{
+public:
+    SetSegmentBoundsCommand(
+        SegmentTableModel *model, SegmentCommandContext *ctx, int row, qint64 inMs, qint64 outMs);
+    void undo() override;
+    void redo() override;
+
+private:
+    SegmentTableModel *m_model;
+    SegmentCommandContext *m_ctx;
+    int m_row;
+    qint64 m_newInMs;
+    qint64 m_newOutMs;
+    qint64 m_previousInMs = 0;
+    qint64 m_previousOutMs = 0;
+};

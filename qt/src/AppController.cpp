@@ -164,6 +164,28 @@ QString AppController::sizeText() const { return m_sizeText; }
 QString AppController::mediaSummary() const { return m_mediaSummary; }
 int AppController::keyframeCount() const { return m_keyframes.size(); }
 QString AppController::currentKeyframeText() const { return formatMs(currentKeyframeMs()); }
+
+qint64 AppController::durationMs() const
+{
+    return static_cast<qint64>(m_metadataJson.value(QStringLiteral("duration_ms")).toDouble());
+}
+
+qint64 AppController::positionMs() const { return currentKeyframeMs(); }
+
+int AppController::currentKeyframeIndex() const
+{
+    return m_keyframes.isEmpty() ? -1 : m_currentIndex;
+}
+
+QVariantList AppController::keyframesMs() const
+{
+    QVariantList list;
+    list.reserve(m_keyframes.size());
+    for (qint64 ms : m_keyframes) {
+        list.push_back(ms);
+    }
+    return list;
+}
 QString AppController::pendingInText() const { return m_hasPendingIn ? formatMs(m_pendingIn) : "-"; }
 QString AppController::pendingOutText() const { return m_hasPendingOut ? formatMs(m_pendingOut) : "-"; }
 QString AppController::totalDurationText() const { return m_totalDurationText; }
@@ -466,8 +488,7 @@ void AppController::jumpToTimecode(const QString &timecode)
     const qint64 snapped = static_cast<qint64>(snap.value("snap").toObject().value("snapped_ms").toDouble());
     const auto it = std::lower_bound(m_keyframes.begin(), m_keyframes.end(), snapped);
     if (it != m_keyframes.end() && *it == snapped) {
-        m_currentIndex = static_cast<int>(std::distance(m_keyframes.begin(), it));
-        emit keyframesChanged();
+        setCurrentIndex(static_cast<int>(std::distance(m_keyframes.begin(), it)));
     }
     const qint64 distance = static_cast<qint64>(snap.value("snap").toObject().value("distance_ms").toDouble());
     setLogText(tr("Requested %1 snapped to %2. Distance: %3 ms.")
@@ -477,18 +498,56 @@ void AppController::jumpToTimecode(const QString &timecode)
 
 void AppController::previousKeyframe()
 {
-    if (m_currentIndex > 0) {
-        --m_currentIndex;
-        emit keyframesChanged();
-    }
+    setCurrentIndex(m_currentIndex - 1);
 }
 
 void AppController::nextKeyframe()
 {
-    if (m_currentIndex + 1 < m_keyframes.size()) {
-        ++m_currentIndex;
-        emit keyframesChanged();
+    setCurrentIndex(m_currentIndex + 1);
+}
+
+void AppController::seekToMs(qint64 ms)
+{
+    // Scrub entry point: snaps to the nearest keyframe so the playhead is
+    // always stream-copy-safe. Quiet on purpose — no log spam while
+    // dragging across the timeline.
+    if (m_keyframes.isEmpty()) {
+        return;
     }
+    const qint64 snapped = nearestKeyframeMs(ms);
+    if (snapped < 0) {
+        return;
+    }
+    const auto it = std::lower_bound(m_keyframes.begin(), m_keyframes.end(), snapped);
+    if (it != m_keyframes.end() && *it == snapped) {
+        setCurrentIndex(static_cast<int>(std::distance(m_keyframes.begin(), it)));
+    }
+}
+
+qint64 AppController::nearestKeyframeMs(qint64 ms) const
+{
+    if (m_keyframes.isEmpty()) {
+        return -1;
+    }
+    const QJsonObject snap = RustBridge::nearestKeyframe(keyframesJson(), ms);
+    if (!snap.value("ok").toBool()) {
+        return -1;
+    }
+    return static_cast<qint64>(snap.value("snap").toObject().value("snapped_ms").toDouble());
+}
+
+void AppController::setCurrentIndex(int index)
+{
+    if (m_keyframes.isEmpty()) {
+        return;
+    }
+    const int clamped = std::clamp(index, 0, static_cast<int>(m_keyframes.size()) - 1);
+    if (clamped == m_currentIndex) {
+        return;
+    }
+    m_currentIndex = clamped;
+    emit keyframesChanged();
+    emit positionMsChanged();
 }
 
 void AppController::previewCurrent()
@@ -542,6 +601,71 @@ void AppController::setOut()
     m_pendingOut = currentKeyframeMs();
     m_hasPendingOut = true;
     emit markersChanged();
+}
+
+void AppController::clearPendingMarkers()
+{
+    if (!m_hasPendingIn && !m_hasPendingOut) {
+        return;
+    }
+    m_hasPendingIn = false;
+    m_hasPendingOut = false;
+    emit markersChanged();
+}
+
+void AppController::setSegmentBounds(int row, qint64 inMs, qint64 outMs)
+{
+    if (row < 0 || row >= m_segments->rowCount()) {
+        return;
+    }
+    const qint64 snappedIn = nearestKeyframeMs(inMs);
+    const qint64 snappedOut = nearestKeyframeMs(outMs);
+    if (snappedIn < 0 || snappedOut < 0) {
+        return;
+    }
+    if (snappedOut <= snappedIn) {
+        emit toastRequested(tr("OUT must land on a keyframe after IN."), QStringLiteral("error"));
+        return;
+    }
+    const SegmentRow current = m_segments->segments().at(row);
+    if (current.inMs == snappedIn && current.outMs == snappedOut) {
+        return;
+    }
+    QJsonArray candidate = m_segments->toJsonArray();
+    QJsonObject edited = candidate.at(row).toObject();
+    edited.insert(QStringLiteral("in_ms"), static_cast<double>(snappedIn));
+    edited.insert(QStringLiteral("out_ms"), static_cast<double>(snappedOut));
+    candidate.replace(row, edited);
+    const QJsonObject validated = RustBridge::validateSegments(candidate, keyframesJson());
+    if (!validated.value("ok").toBool()) {
+        emit toastRequested(validated.value("error").toString(), QStringLiteral("error"));
+        return;
+    }
+    m_undo.push(new SetSegmentBoundsCommand(m_segments, this, row, snappedIn, snappedOut));
+    setLogText(tr("Segment trimmed to %1 – %2.").arg(formatMs(snappedIn), formatMs(snappedOut)));
+}
+
+void AppController::renameSegment(int row, const QString &name)
+{
+    if (row < 0 || row >= m_segments->rowCount()) {
+        return;
+    }
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty() || m_segments->segments().at(row).name == trimmed) {
+        return;
+    }
+    m_undo.push(new RenameSegmentCommand(m_segments, this, row, trimmed));
+}
+
+void AppController::setSegmentNotes(int row, const QString &notes)
+{
+    if (row < 0 || row >= m_segments->rowCount()) {
+        return;
+    }
+    if (m_segments->segments().at(row).notes == notes) {
+        return;
+    }
+    m_undo.push(new SetSegmentNotesCommand(m_segments, this, row, notes));
 }
 
 void AppController::addSegment(const QString &name, const QString &notes)
@@ -751,6 +875,7 @@ void AppController::clearMediaState()
     m_mediaSummary = tr("Open a video to inspect stream-copy-safe keyframes.");
     emit metadataChanged();
     emit keyframesChanged();
+    emit positionMsChanged();
     emit markersChanged();
 }
 
@@ -778,6 +903,7 @@ void AppController::applyMetadata(const QJsonObject &metadata, const QJsonArray 
     m_currentIndex = 0;
     emit metadataChanged();
     emit keyframesChanged();
+    emit positionMsChanged();
 }
 
 void AppController::updateTotalDuration()

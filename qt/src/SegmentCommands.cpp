@@ -122,3 +122,81 @@ void ToggleSegmentCommand::undo()
     m_model->setEnabled(m_row, m_previousEnabled);
     if (m_ctx) m_ctx->onSegmentsMutated();
 }
+
+RenameSegmentCommand::RenameSegmentCommand(
+    SegmentTableModel *model, SegmentCommandContext *ctx, int row, const QString &name)
+    : m_model(model)
+    , m_ctx(ctx)
+    , m_row(row)
+    , m_newName(name)
+{
+    setText(QObject::tr("Rename segment"));
+    if (m_row >= 0 && m_row < m_model->rowCount()) {
+        m_previousName = m_model->segments().at(m_row).name;
+    }
+}
+
+void RenameSegmentCommand::redo()
+{
+    m_model->setName(m_row, m_newName);
+    if (m_ctx) m_ctx->onSegmentsMutated();
+}
+
+void RenameSegmentCommand::undo()
+{
+    m_model->setName(m_row, m_previousName);
+    if (m_ctx) m_ctx->onSegmentsMutated();
+}
+
+SetSegmentNotesCommand::SetSegmentNotesCommand(
+    SegmentTableModel *model, SegmentCommandContext *ctx, int row, const QString &notes)
+    : m_model(model)
+    , m_ctx(ctx)
+    , m_row(row)
+    , m_newNotes(notes)
+{
+    setText(QObject::tr("Edit segment notes"));
+    if (m_row >= 0 && m_row < m_model->rowCount()) {
+        m_previousNotes = m_model->segments().at(m_row).notes;
+    }
+}
+
+void SetSegmentNotesCommand::redo()
+{
+    m_model->setNotes(m_row, m_newNotes);
+    if (m_ctx) m_ctx->onSegmentsMutated();
+}
+
+void SetSegmentNotesCommand::undo()
+{
+    m_model->setNotes(m_row, m_previousNotes);
+    if (m_ctx) m_ctx->onSegmentsMutated();
+}
+
+SetSegmentBoundsCommand::SetSegmentBoundsCommand(
+    SegmentTableModel *model, SegmentCommandContext *ctx, int row, qint64 inMs, qint64 outMs)
+    : m_model(model)
+    , m_ctx(ctx)
+    , m_row(row)
+    , m_newInMs(inMs)
+    , m_newOutMs(outMs)
+{
+    setText(QObject::tr("Trim segment"));
+    if (m_row >= 0 && m_row < m_model->rowCount()) {
+        const SegmentRow &segment = m_model->segments().at(m_row);
+        m_previousInMs = segment.inMs;
+        m_previousOutMs = segment.outMs;
+    }
+}
+
+void SetSegmentBoundsCommand::redo()
+{
+    m_model->setBounds(m_row, m_newInMs, m_newOutMs);
+    if (m_ctx) m_ctx->onSegmentsMutated();
+}
+
+void SetSegmentBoundsCommand::undo()
+{
+    m_model->setBounds(m_row, m_previousInMs, m_previousOutMs);
+    if (m_ctx) m_ctx->onSegmentsMutated();
+}

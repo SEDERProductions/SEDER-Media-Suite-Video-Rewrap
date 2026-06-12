@@ -166,6 +166,46 @@ void SegmentTableModel::setEnabled(int row, bool enabled)
     invalidateJsonCache();
 }
 
+void SegmentTableModel::setName(int row, const QString &name)
+{
+    if (row < 0 || row >= m_segments.size() || m_segments[row].name == name) {
+        return;
+    }
+    m_segments[row].name = name;
+    const QModelIndex cell = index(row, 1);
+    emit dataChanged(cell, cell, { Qt::DisplayRole, NameRole });
+    invalidateJsonCache();
+}
+
+void SegmentTableModel::setNotes(int row, const QString &notes)
+{
+    if (row < 0 || row >= m_segments.size() || m_segments[row].notes == notes) {
+        return;
+    }
+    m_segments[row].notes = notes;
+    const QModelIndex cell = index(row, 5);
+    emit dataChanged(cell, cell, { Qt::DisplayRole, NotesRole });
+    invalidateJsonCache();
+}
+
+void SegmentTableModel::setBounds(int row, qint64 inMs, qint64 outMs)
+{
+    if (row < 0 || row >= m_segments.size()) {
+        return;
+    }
+    SegmentRow &segment = m_segments[row];
+    if (segment.inMs == inMs && segment.outMs == outMs) {
+        return;
+    }
+    segment.inMs = inMs;
+    segment.outMs = outMs;
+    const QModelIndex first = index(row, 2);
+    const QModelIndex last = index(row, 4);
+    emit dataChanged(first, last,
+        { Qt::DisplayRole, InMsRole, OutMsRole, InTextRole, OutTextRole, DurationTextRole });
+    invalidateJsonCache();
+}
+
 void SegmentTableModel::append(const SegmentRow &segment)
 {
     const int row = m_segments.size();
