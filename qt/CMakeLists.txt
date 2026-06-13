@@ -8,14 +8,11 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 if(MSVC)
-    # Qt 6.4's qvarlengtharray.h still uses stdext::checked_array_iterator,
-    # which the VS 2022 17.10+ STL removed by default. Restore the symbols
-    # (and silence their deprecation) so the app and tests build against
-    # the modern MSVC toolset shipped on windows-latest runners.
-    add_compile_definitions(
-        _HAS_STDEXT_CHECKED_ARRAY_ITERATORS=1
-        _SILENCE_STDEXT_ARR_ITERS_DEPRECATION_WARNING
-    )
+    # VS 2022 17.10+ removed stdext::checked_array_iterator, which Qt 6.4's
+    # qvarlengtharray.h still uses (there is no opt-in macro to restore it).
+    # Force-include a compatibility shim ahead of every Qt header so the app
+    # and tests build against the modern MSVC toolset on windows-latest.
+    add_compile_options("/FI${CMAKE_CURRENT_SOURCE_DIR}/src/qt_msvc_stdext_compat.h")
 endif()
 
 find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 Widgets Test)
