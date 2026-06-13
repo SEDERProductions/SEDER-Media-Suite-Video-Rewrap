@@ -107,6 +107,20 @@ private:
     Iterator m_ptr = Iterator();
 };
 
+// Factory helpers — Qt's qvarlengtharray.h calls these, not the
+// constructors directly (matching the original MSVC STL signatures).
+template <typename T>
+constexpr checked_array_iterator<T *> make_checked_array_iterator(T *array, std::size_t size, std::size_t index = 0)
+{
+    return checked_array_iterator<T *>(array, size, index);
+}
+
+template <typename T>
+constexpr unchecked_array_iterator<T *> make_unchecked_array_iterator(T *ptr)
+{
+    return unchecked_array_iterator<T *>(ptr);
+}
+
 } // namespace stdext
 
 #endif // _MSC_VER >= 1940
