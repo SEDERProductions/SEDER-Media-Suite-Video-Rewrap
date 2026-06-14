@@ -194,24 +194,3 @@ void FrameGrabber::setGrabbing(bool grabbing)
     m_grabbing = grabbing;
     emit grabbingChanged();
 }
-
-FrameImageProvider::FrameImageProvider(FrameGrabber *grabber)
-    : QQuickImageProvider(QQuickImageProvider::Image)
-    , m_grabber(grabber)
-{
-}
-
-QImage FrameImageProvider::requestImage(const QString &id, QSize *size, const QSize &requestedSize)
-{
-    Q_UNUSED(id);
-    Q_UNUSED(requestedSize);
-    QImage image = m_grabber ? m_grabber->frameForProvider() : QImage();
-    if (image.isNull()) {
-        image = QImage(2, 2, QImage::Format_ARGB32);
-        image.fill(Qt::transparent);
-    }
-    if (size) {
-        *size = image.size();
-    }
-    return image;
-}

@@ -5,7 +5,6 @@
 #include <QList>
 #include <QMutex>
 #include <QObject>
-#include <QQuickImageProvider>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
@@ -68,15 +67,4 @@ private:
     QString m_cacheSource;
     QHash<qint64, QImage> m_cache;
     QList<qint64> m_cacheOrder;
-};
-
-class FrameImageProvider : public QQuickImageProvider
-{
-public:
-    explicit FrameImageProvider(FrameGrabber *grabber);
-
-    QImage requestImage(const QString &id, QSize *size, const QSize &requestedSize) override;
-
-private:
-    FrameGrabber *m_grabber;
 };

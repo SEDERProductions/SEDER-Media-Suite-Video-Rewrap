@@ -1,5 +1,5 @@
 #include "AppController.h"
-#include "FrameGrabber.h"
+#include "FrameImageProvider.h"
 #include "SegmentTableModel.h"
 #include "UiSettings.h"
 #include "seder_version.h"

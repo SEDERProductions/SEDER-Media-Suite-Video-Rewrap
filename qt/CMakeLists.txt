@@ -242,8 +242,6 @@ target_link_libraries(app-controller-tests PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Network
-    Qt6::Qml
-    Qt6::Quick
     Qt6::Widgets
     Qt6::Test
     ${RUST_CORE_LIBRARY}
