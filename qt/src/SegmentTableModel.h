@@ -42,6 +42,9 @@ public:
     Q_INVOKABLE void moveUp(int row);
     Q_INVOKABLE void moveDown(int row);
     Q_INVOKABLE void setEnabled(int row, bool enabled);
+    void setName(int row, const QString &name);
+    void setNotes(int row, const QString &notes);
+    void setBounds(int row, qint64 inMs, qint64 outMs);
 
     void append(const SegmentRow &segment);
     void setSegments(const QVector<SegmentRow> &segments);

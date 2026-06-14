@@ -44,6 +44,41 @@ private slots:
         QCOMPARE(model.data(model.index(0, 1)).toString(), QString("A copy"));
     }
 
+    void settersEmitRolesAndRefreshJson()
+    {
+        SegmentTableModel model;
+        model.append(SegmentRow { "A", 0, 1000, "old", true });
+
+        QSignalSpy changedSpy(&model, &SegmentTableModel::dataChanged);
+
+        model.setName(0, "Renamed");
+        QCOMPARE(model.data(model.index(0, 1)).toString(), QString("Renamed"));
+        QCOMPARE(changedSpy.size(), 1);
+
+        model.setNotes(0, "fresh");
+        QCOMPARE(model.data(model.index(0, 5)).toString(), QString("fresh"));
+        QCOMPARE(changedSpy.size(), 2);
+
+        model.setBounds(0, 2000, 6000);
+        QCOMPARE(model.data(model.index(0, 2)).toString(), QString("00:00:02.000"));
+        QCOMPARE(model.data(model.index(0, 3)).toString(), QString("00:00:06.000"));
+        QCOMPARE(model.data(model.index(0, 4)).toString(), QString("00:00:04.000"));
+        QCOMPARE(changedSpy.size(), 3);
+
+        // The serialized JSON cache must reflect the edits.
+        const QJsonObject serialized = model.toJsonArray().at(0).toObject();
+        QCOMPARE(serialized.value("name").toString(), QString("Renamed"));
+        QCOMPARE(serialized.value("notes").toString(), QString("fresh"));
+        QCOMPARE(serialized.value("in_ms").toDouble(), 2000.0);
+        QCOMPARE(serialized.value("out_ms").toDouble(), 6000.0);
+
+        // No-op writes must not emit.
+        model.setName(0, "Renamed");
+        model.setNotes(0, "fresh");
+        model.setBounds(0, 2000, 6000);
+        QCOMPARE(changedSpy.size(), 3);
+    }
+
     void moveDown_shiftsRowDownByOne()
     {
         SegmentTableModel model;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ExportEngine.h"
+#include "FrameGrabber.h"
 #include "ProbeEngine.h"
 #include "RecentFilesModel.h"
 #include "RustBridge.h"
@@ -13,6 +14,7 @@
 #include <QObject>
 #include <QString>
 #include <QUndoStack>
+#include <QVariant>
 #include <QVector>
 #include <functional>
 
@@ -24,6 +26,7 @@ class AppController : public QObject, public SegmentCommandContext
     Q_PROPERTY(RecentFilesModel *recentOutputs READ recentOutputs CONSTANT)
     Q_PROPERTY(RecentFilesModel *recentProjects READ recentProjects CONSTANT)
     Q_PROPERTY(UpdateChecker *updateChecker READ updateChecker CONSTANT)
+    Q_PROPERTY(FrameGrabber *frameGrabber READ frameGrabber CONSTANT)
     Q_PROPERTY(QString sourcePath READ sourcePath NOTIFY sourcePathChanged)
     Q_PROPERTY(QString outputPath READ outputPath NOTIFY outputPathChanged)
     Q_PROPERTY(QString logText READ logText NOTIFY logTextChanged)
@@ -43,9 +46,17 @@ class AppController : public QObject, public SegmentCommandContext
     Q_PROPERTY(QString sizeText READ sizeText NOTIFY metadataChanged)
     Q_PROPERTY(QString mediaSummary READ mediaSummary NOTIFY metadataChanged)
     Q_PROPERTY(int keyframeCount READ keyframeCount NOTIFY keyframesChanged)
-    Q_PROPERTY(QString currentKeyframeText READ currentKeyframeText NOTIFY keyframesChanged)
+    Q_PROPERTY(QString currentKeyframeText READ currentKeyframeText NOTIFY positionMsChanged)
+    Q_PROPERTY(qint64 durationMs READ durationMs NOTIFY metadataChanged)
+    Q_PROPERTY(qint64 positionMs READ positionMs NOTIFY positionMsChanged)
+    Q_PROPERTY(int currentKeyframeIndex READ currentKeyframeIndex NOTIFY positionMsChanged)
+    Q_PROPERTY(QVariantList keyframesMs READ keyframesMs NOTIFY keyframesChanged)
     Q_PROPERTY(QString pendingInText READ pendingInText NOTIFY markersChanged)
     Q_PROPERTY(QString pendingOutText READ pendingOutText NOTIFY markersChanged)
+    Q_PROPERTY(qint64 pendingInMs READ pendingInMs NOTIFY markersChanged)
+    Q_PROPERTY(qint64 pendingOutMs READ pendingOutMs NOTIFY markersChanged)
+    Q_PROPERTY(bool hasPendingIn READ hasPendingIn NOTIFY markersChanged)
+    Q_PROPERTY(bool hasPendingOut READ hasPendingOut NOTIFY markersChanged)
     Q_PROPERTY(QString totalDurationText READ totalDurationText NOTIFY segmentsChanged)
     Q_PROPERTY(int selectedRow READ selectedRow NOTIFY selectedRowChanged)
     Q_PROPERTY(QString theme READ theme WRITE setTheme NOTIFY themeChanged)
@@ -63,6 +74,7 @@ public:
     RecentFilesModel *recentOutputs() const { return m_recentOutputs; }
     RecentFilesModel *recentProjects() const { return m_recentProjects; }
     UpdateChecker *updateChecker() const { return m_updateChecker; }
+    FrameGrabber *frameGrabber() const { return m_frameGrabber; }
     QString sourcePath() const;
     QString outputPath() const;
     QString logText() const;
@@ -83,8 +95,16 @@ public:
     QString mediaSummary() const;
     int keyframeCount() const;
     QString currentKeyframeText() const;
+    qint64 durationMs() const;
+    qint64 positionMs() const;
+    int currentKeyframeIndex() const;
+    QVariantList keyframesMs() const;
     QString pendingInText() const;
     QString pendingOutText() const;
+    qint64 pendingInMs() const { return m_hasPendingIn ? m_pendingIn : -1; }
+    qint64 pendingOutMs() const { return m_hasPendingOut ? m_pendingOut : -1; }
+    bool hasPendingIn() const { return m_hasPendingIn; }
+    bool hasPendingOut() const { return m_hasPendingOut; }
     QString totalDurationText() const;
     int selectedRow() const;
     QString theme() const;
@@ -110,9 +130,15 @@ public:
     Q_INVOKABLE void jumpToTimecode(const QString &timecode);
     Q_INVOKABLE void previousKeyframe();
     Q_INVOKABLE void nextKeyframe();
+    Q_INVOKABLE void seekToMs(qint64 ms);
+    Q_INVOKABLE qint64 nearestKeyframeMs(qint64 ms) const;
     Q_INVOKABLE void previewCurrent();
     Q_INVOKABLE void setIn();
     Q_INVOKABLE void setOut();
+    Q_INVOKABLE void clearPendingMarkers();
+    Q_INVOKABLE void setSegmentBounds(int row, qint64 inMs, qint64 outMs);
+    Q_INVOKABLE void renameSegment(int row, const QString &name);
+    Q_INVOKABLE void setSegmentNotes(int row, const QString &notes);
     Q_INVOKABLE void addSegment(const QString &name, const QString &notes);
     Q_INVOKABLE void selectSegment(int row);
     Q_INVOKABLE void removeSegment(int row);
@@ -150,8 +176,10 @@ signals:
     void customFfmpegDirChanged();
     void metadataChanged();
     void keyframesChanged();
+    void positionMsChanged();
     void markersChanged();
     void segmentsChanged();
+    void toastRequested(const QString &message, const QString &tone);
     void selectedRowChanged();
     void themeChanged();
     void exportModeChanged();
@@ -163,6 +191,7 @@ private:
     void setLogText(const QString &text);
     void setLastErrorLog(const QString &text);
     void setSelectedRowValue(int row);
+    void setCurrentIndex(int index);
     void updateTotalDuration();
     void clearMediaState();
     void applyMetadata(const QJsonObject &metadata, const QJsonArray &keyframes);
@@ -186,6 +215,7 @@ private:
     RecentFilesModel *m_recentOutputs = nullptr;
     RecentFilesModel *m_recentProjects = nullptr;
     UpdateChecker *m_updateChecker = nullptr;
+    FrameGrabber *m_frameGrabber = nullptr;
     QUndoStack m_undo;
 
     QString m_sourcePath;

@@ -95,6 +95,13 @@ AppController::AppController(SegmentTableModel *segments, QObject *parent)
 {
     m_probeEngine = new ProbeEngine(this);
     m_exportEngine = new ExportEngine(this);
+    m_frameGrabber = new FrameGrabber(this);
+
+    // Every playhead move refreshes the program monitor; an empty
+    // keyframe list (media cleared) resets it instead.
+    connect(this, &AppController::positionMsChanged, this, [this] {
+        m_frameGrabber->requestFrame(m_sourcePath, m_keyframes.isEmpty() ? -1 : currentKeyframeMs());
+    });
 
     connect(m_probeEngine, &ProbeEngine::toolsChanged, this, [this] {
         refreshFfmpegVersion();
@@ -122,6 +129,9 @@ AppController::AppController(SegmentTableModel *segments, QObject *parent)
     });
     connect(m_exportEngine, &ExportEngine::logMessage, this, &AppController::setLogText);
     connect(m_exportEngine, &ExportEngine::errorReport, this, &AppController::setLastErrorLog);
+    connect(m_exportEngine, &ExportEngine::finished, this, [this](bool ok, const QString &message) {
+        emit toastRequested(message, ok ? QStringLiteral("success") : QStringLiteral("error"));
+    });
 
     connect(&m_undo, &QUndoStack::canUndoChanged, this, [this] { emit undoStackChanged(); });
     connect(&m_undo, &QUndoStack::canRedoChanged, this, [this] { emit undoStackChanged(); });
@@ -131,6 +141,11 @@ AppController::AppController(SegmentTableModel *segments, QObject *parent)
     m_customFfmpegDir = settings.value(kCustomFfmpegDirKey).toString();
     applyCustomFfmpegDirToEnvironment();
     setTheme(m_theme);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    // Follow live OS light/dark switches while theme is "system".
+    connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged,
+        this, [this] { setTheme(m_theme); });
+#endif
     m_probeEngine->recheckBackground();
 
     if (m_updateChecker->checkOnLaunch() && qEnvironmentVariableIsEmpty("SEDER_DISABLE_UPDATE_CHECK")) {
@@ -159,6 +174,28 @@ QString AppController::sizeText() const { return m_sizeText; }
 QString AppController::mediaSummary() const { return m_mediaSummary; }
 int AppController::keyframeCount() const { return m_keyframes.size(); }
 QString AppController::currentKeyframeText() const { return formatMs(currentKeyframeMs()); }
+
+qint64 AppController::durationMs() const
+{
+    return static_cast<qint64>(m_metadataJson.value(QStringLiteral("duration_ms")).toDouble());
+}
+
+qint64 AppController::positionMs() const { return currentKeyframeMs(); }
+
+int AppController::currentKeyframeIndex() const
+{
+    return m_keyframes.isEmpty() ? -1 : m_currentIndex;
+}
+
+QVariantList AppController::keyframesMs() const
+{
+    QVariantList list;
+    list.reserve(m_keyframes.size());
+    for (qint64 ms : m_keyframes) {
+        list.push_back(ms);
+    }
+    return list;
+}
 QString AppController::pendingInText() const { return m_hasPendingIn ? formatMs(m_pendingIn) : "-"; }
 QString AppController::pendingOutText() const { return m_hasPendingOut ? formatMs(m_pendingOut) : "-"; }
 QString AppController::totalDurationText() const { return m_totalDurationText; }
@@ -224,6 +261,7 @@ void AppController::openProjectPath(const QString &path)
     }
     m_recentProjects->prepend(path);
     setLogText(tr("Project loaded: %1").arg(QDir::toNativeSeparators(path)));
+    emit toastRequested(tr("Project loaded"), QStringLiteral("success"));
 }
 
 void AppController::setOutputFromPath(const QString &path)
@@ -307,6 +345,7 @@ bool AppController::runExportFlow(
         m_recentProjects->prepend(path);
     }
     setLogText(QStringLiteral("%1: %2").arg(successLog, QDir::toNativeSeparators(path)));
+    emit toastRequested(successLog, QStringLiteral("success"));
     return true;
 }
 
@@ -461,8 +500,7 @@ void AppController::jumpToTimecode(const QString &timecode)
     const qint64 snapped = static_cast<qint64>(snap.value("snap").toObject().value("snapped_ms").toDouble());
     const auto it = std::lower_bound(m_keyframes.begin(), m_keyframes.end(), snapped);
     if (it != m_keyframes.end() && *it == snapped) {
-        m_currentIndex = static_cast<int>(std::distance(m_keyframes.begin(), it));
-        emit keyframesChanged();
+        setCurrentIndex(static_cast<int>(std::distance(m_keyframes.begin(), it)));
     }
     const qint64 distance = static_cast<qint64>(snap.value("snap").toObject().value("distance_ms").toDouble());
     setLogText(tr("Requested %1 snapped to %2. Distance: %3 ms.")
@@ -472,18 +510,58 @@ void AppController::jumpToTimecode(const QString &timecode)
 
 void AppController::previousKeyframe()
 {
-    if (m_currentIndex > 0) {
-        --m_currentIndex;
-        emit keyframesChanged();
-    }
+    setCurrentIndex(m_currentIndex - 1);
 }
 
 void AppController::nextKeyframe()
 {
-    if (m_currentIndex + 1 < m_keyframes.size()) {
-        ++m_currentIndex;
-        emit keyframesChanged();
+    setCurrentIndex(m_currentIndex + 1);
+}
+
+void AppController::seekToMs(qint64 ms)
+{
+    // Scrub entry point: snaps to the nearest keyframe so the playhead is
+    // always stream-copy-safe. Quiet on purpose — no log spam while
+    // dragging across the timeline.
+    if (m_keyframes.isEmpty()) {
+        return;
     }
+    const qint64 snapped = nearestKeyframeMs(ms);
+    if (snapped < 0) {
+        return;
+    }
+    const auto it = std::lower_bound(m_keyframes.begin(), m_keyframes.end(), snapped);
+    if (it != m_keyframes.end() && *it == snapped) {
+        setCurrentIndex(static_cast<int>(std::distance(m_keyframes.begin(), it)));
+    }
+}
+
+qint64 AppController::nearestKeyframeMs(qint64 ms) const
+{
+    if (m_keyframes.isEmpty()) {
+        return -1;
+    }
+    const QJsonObject snap = RustBridge::nearestKeyframe(keyframesJson(), ms);
+    if (!snap.value("ok").toBool()) {
+        return -1;
+    }
+    return static_cast<qint64>(snap.value("snap").toObject().value("snapped_ms").toDouble());
+}
+
+void AppController::setCurrentIndex(int index)
+{
+    if (m_keyframes.isEmpty()) {
+        return;
+    }
+    const int clamped = std::clamp(index, 0, static_cast<int>(m_keyframes.size()) - 1);
+    if (clamped == m_currentIndex) {
+        return;
+    }
+    m_currentIndex = clamped;
+    // keyframesChanged is reserved for actual list changes; position
+    // moves are cheap and frequent (scrubbing), so they get their own
+    // signal and QML never re-reads the keyframe list for them.
+    emit positionMsChanged();
 }
 
 void AppController::previewCurrent()
@@ -537,6 +615,71 @@ void AppController::setOut()
     m_pendingOut = currentKeyframeMs();
     m_hasPendingOut = true;
     emit markersChanged();
+}
+
+void AppController::clearPendingMarkers()
+{
+    if (!m_hasPendingIn && !m_hasPendingOut) {
+        return;
+    }
+    m_hasPendingIn = false;
+    m_hasPendingOut = false;
+    emit markersChanged();
+}
+
+void AppController::setSegmentBounds(int row, qint64 inMs, qint64 outMs)
+{
+    if (row < 0 || row >= m_segments->rowCount()) {
+        return;
+    }
+    const qint64 snappedIn = nearestKeyframeMs(inMs);
+    const qint64 snappedOut = nearestKeyframeMs(outMs);
+    if (snappedIn < 0 || snappedOut < 0) {
+        return;
+    }
+    if (snappedOut <= snappedIn) {
+        emit toastRequested(tr("OUT must land on a keyframe after IN."), QStringLiteral("error"));
+        return;
+    }
+    const SegmentRow current = m_segments->segments().at(row);
+    if (current.inMs == snappedIn && current.outMs == snappedOut) {
+        return;
+    }
+    QJsonArray candidate = m_segments->toJsonArray();
+    QJsonObject edited = candidate.at(row).toObject();
+    edited.insert(QStringLiteral("in_ms"), static_cast<double>(snappedIn));
+    edited.insert(QStringLiteral("out_ms"), static_cast<double>(snappedOut));
+    candidate.replace(row, edited);
+    const QJsonObject validated = RustBridge::validateSegments(candidate, keyframesJson());
+    if (!validated.value("ok").toBool()) {
+        emit toastRequested(validated.value("error").toString(), QStringLiteral("error"));
+        return;
+    }
+    m_undo.push(new SetSegmentBoundsCommand(m_segments, this, row, snappedIn, snappedOut));
+    setLogText(tr("Segment trimmed to %1 – %2.").arg(formatMs(snappedIn), formatMs(snappedOut)));
+}
+
+void AppController::renameSegment(int row, const QString &name)
+{
+    if (row < 0 || row >= m_segments->rowCount()) {
+        return;
+    }
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty() || m_segments->segments().at(row).name == trimmed) {
+        return;
+    }
+    m_undo.push(new RenameSegmentCommand(m_segments, this, row, trimmed));
+}
+
+void AppController::setSegmentNotes(int row, const QString &notes)
+{
+    if (row < 0 || row >= m_segments->rowCount()) {
+        return;
+    }
+    if (m_segments->segments().at(row).notes == notes) {
+        return;
+    }
+    m_undo.push(new SetSegmentNotesCommand(m_segments, this, row, notes));
 }
 
 void AppController::addSegment(const QString &name, const QString &notes)
@@ -612,10 +755,23 @@ void AppController::toggleSegment(int row, bool enabled)
     m_undo.push(new ToggleSegmentCommand(m_segments, this, row, enabled));
 }
 
+namespace {
+bool systemPrefersDark()
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    const Qt::ColorScheme scheme = QGuiApplication::styleHints()->colorScheme();
+    if (scheme == Qt::ColorScheme::Light) return false;
+    if (scheme == Qt::ColorScheme::Dark) return true;
+#endif
+    // Palette luminance fallback; "unknown" leans dark, the design target.
+    return QGuiApplication::palette().color(QPalette::Window).lightness() < 140;
+}
+}
+
 void AppController::setTheme(const QString &theme)
 {
     const QString normalized = (theme == "light" || theme == "dark") ? theme : QStringLiteral("system");
-    const bool dark = normalized == "dark";
+    const bool dark = normalized == "dark" || (normalized == QStringLiteral("system") && systemPrefersDark());
     const bool changed = normalized != m_theme || dark != m_darkMode;
     m_theme = normalized;
     m_darkMode = dark;
@@ -733,6 +889,7 @@ void AppController::clearMediaState()
     m_mediaSummary = tr("Open a video to inspect stream-copy-safe keyframes.");
     emit metadataChanged();
     emit keyframesChanged();
+    emit positionMsChanged();
     emit markersChanged();
 }
 
@@ -760,6 +917,7 @@ void AppController::applyMetadata(const QJsonObject &metadata, const QJsonArray 
     m_currentIndex = 0;
     emit metadataChanged();
     emit keyframesChanged();
+    emit positionMsChanged();
 }
 
 void AppController::updateTotalDuration()

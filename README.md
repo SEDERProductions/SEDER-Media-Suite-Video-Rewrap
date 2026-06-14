@@ -12,10 +12,13 @@ Builds are ad-hoc signed by SEDER Productions for tamper-detection. macOS may st
 
 ## Features
 
-- Qt 6/QML desktop interface with menu bar, drag-and-drop, full keyboard shortcuts, and accessibility labels.
+- Premiere-style charcoal workspace (Qt 6/QML): resizable panel splits, Project/Export tabs, menu bar, drag-and-drop, full keyboard shortcuts, tooltips with shortcut hints, and accessibility labels. Dark-first with a matching light theme.
+- Visual timeline: segments as clips on a zoomable track with keyframe ticks, press-anywhere scrubbing, edge retrimming with keyframe snapping (undoable), and a right-click clip menu.
+- Program monitor: the exact frame at the playhead, extracted with ffmpeg and cached for instant keyframe stepping — no extra dependencies.
 - Compiled Rust media core for timecode, keyframe, segment, project, and report logic.
 - FFprobe metadata and keyframe discovery.
-- FFplay preview from the selected keyframe.
+- FFplay preview from the selected keyframe (audio/full-speed playback).
+- Toast notifications for saves, reports, and export results.
 - FFmpeg stream-copy export with no re-encode fallback. Refuses to start on FFmpeg < 4.0 instead of failing cryptically.
 - Project save/load with explicit schema versioning, plus TXT and CSV report export.
 - Undo / redo for every segment edit.

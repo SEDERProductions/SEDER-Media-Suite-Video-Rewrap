@@ -7,6 +7,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
+if(MSVC)
+    # VS 2022 17.10+ removed stdext::checked_array_iterator, which Qt 6.4's
+    # qvarlengtharray.h still uses (there is no opt-in macro to restore it).
+    # Force-include a compatibility shim ahead of every Qt header so the app
+    # and tests build against the modern MSVC toolset on windows-latest.
+    add_compile_options("/FI${CMAKE_CURRENT_SOURCE_DIR}/src/qt_msvc_stdext_compat.h")
+endif()
+
 find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 Widgets Test)
 
 # Stamp PROJECT_VERSION into a header so every translation unit sees the same
@@ -53,12 +61,14 @@ qt_add_executable(seder-video-rewrap
     src/main.cpp
     src/AppController.cpp
     src/ExportEngine.cpp
+    src/FrameGrabber.cpp
     src/ProbeEngine.cpp
     src/ProcessUtil.cpp
     src/RecentFilesModel.cpp
     src/RustBridge.cpp
     src/SegmentCommands.cpp
     src/SegmentTableModel.cpp
+    src/UiSettings.cpp
     src/UpdateChecker.cpp
     ${SEDER_APP_PLATFORM_SOURCES}
 )
@@ -102,12 +112,64 @@ if(APPLE)
     )
 endif()
 
+# Theme and Icons are QML singletons: pragma Singleton in the file plus
+# this source property (which writes the singleton line into the
+# generated qmldir) are BOTH required on Qt 6.4.
+set_source_files_properties(qml/Theme.qml qml/Icons.qml PROPERTIES
+    QT_QML_SINGLETON_TYPE TRUE
+)
+
 qt_add_qml_module(seder-video-rewrap
     URI Seder.VideoRewrap
     VERSION 1.0
     RESOURCE_PREFIX "/qt/qml"
     QML_FILES
         qml/Main.qml
+        qml/Theme.qml
+        qml/Icons.qml
+        qml/SIcon.qml
+        qml/SButton.qml
+        qml/SIconButton.qml
+        qml/SCheckBox.qml
+        qml/SField.qml
+        qml/SSlider.qml
+        qml/SScrollBar.qml
+        qml/SProgressBar.qml
+        qml/SPill.qml
+        qml/SToolTip.qml
+        qml/STimecodeLabel.qml
+        qml/SPanel.qml
+        qml/SPanelTabs.qml
+        qml/SMenu.qml
+        qml/SMenuItem.qml
+        qml/SMenuSeparator.qml
+        qml/SDialog.qml
+        qml/SToast.qml
+        qml/ToastHost.qml
+        qml/AppMenuBar.qml
+        qml/HeaderBar.qml
+        qml/UpdateBanner.qml
+        qml/StatusBar.qml
+        qml/WelcomeView.qml
+        qml/ProjectPanel.qml
+        qml/ExportPanel.qml
+        qml/MonitorPanel.qml
+        qml/TransportBar.qml
+        qml/TimelinePanel.qml
+        qml/TimelineView.qml
+        qml/TimelineClip.qml
+        qml/SegmentsPanel.qml
+        qml/SegmentContextMenu.qml
+        qml/AboutDialog.qml
+        qml/FfmpegSettingsDialog.qml
+        qml/ErrorLogDialog.qml
+        qml/ShortcutsDialog.qml
+)
+
+qt_add_resources(seder-video-rewrap "branding"
+    PREFIX "/branding"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/../assets"
+    FILES "${CMAKE_CURRENT_SOURCE_DIR}/../assets/icon-64.png"
 )
 
 if(Qt6_VERSION VERSION_GREATER_EQUAL "6.5.0")
@@ -158,6 +220,7 @@ qt_add_executable(app-controller-tests
     tests/AppControllerTests.cpp
     src/AppController.cpp
     src/ExportEngine.cpp
+    src/FrameGrabber.cpp
     src/ProbeEngine.cpp
     src/ProcessUtil.cpp
     src/RecentFilesModel.cpp

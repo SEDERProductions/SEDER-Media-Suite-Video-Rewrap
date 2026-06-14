@@ -1,7 +1,9 @@
 #include "AppController.h"
+#include "FrameGrabber.h"
 #include "RecentFilesModel.h"
 #include "UpdateChecker.h"
 
+#include <QCoreApplication>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
@@ -21,6 +23,19 @@ private:
     }
 
 private slots:
+    void initTestCase()
+    {
+        // QSettings only persists reliably with an organization/application
+        // name set (the real app sets these in main.cpp; QTEST_MAIN does
+        // not). Force IniFormat so the recent-files round-trip is file-based
+        // and identical on every platform — the Windows registry backend
+        // otherwise returns an empty list on reload and fails
+        // recentFilesModel_dedupesAndCapsAtMax.
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QCoreApplication::setOrganizationName(QStringLiteral("SederProductionsTest"));
+        QCoreApplication::setApplicationName(QStringLiteral("VideoRewrapTests"));
+    }
+
     void constructor_setsDefaults()
     {
         SegmentTableModel model;
@@ -328,6 +343,184 @@ private slots:
         QVERIFY(spy.size() >= 1);
         QVERIFY(checker.lastMessage().contains("failed", Qt::CaseInsensitive));
         QVERIFY(!checker.updateAvailable());
+    }
+
+    void seekToMs_snapsToNearestKeyframe()
+    {
+        SegmentTableModel model;
+        AppController ctrl(&model);
+        ctrl.setKeyframesForTesting({ 0, 2000, 4000, 6000 });
+
+        QSignalSpy positionSpy(&ctrl, &AppController::positionMsChanged);
+
+        ctrl.seekToMs(2900);
+        QCOMPARE(ctrl.positionMs(), 2000);
+        QCOMPARE(ctrl.currentKeyframeIndex(), 1);
+        QCOMPARE(positionSpy.size(), 1);
+
+        ctrl.seekToMs(5100);
+        QCOMPARE(ctrl.positionMs(), 6000);
+        QCOMPARE(ctrl.currentKeyframeIndex(), 3);
+        QCOMPARE(positionSpy.size(), 2);
+
+        // Seeking to the same keyframe again must not re-emit.
+        ctrl.seekToMs(6010);
+        QCOMPARE(positionSpy.size(), 2);
+    }
+
+    void seekToMs_withoutKeyframesIsSafe()
+    {
+        SegmentTableModel model;
+        AppController ctrl(&model);
+        QSignalSpy positionSpy(&ctrl, &AppController::positionMsChanged);
+        ctrl.seekToMs(1234);
+        QCOMPARE(positionSpy.size(), 0);
+        QCOMPARE(ctrl.positionMs(), 0);
+        QCOMPARE(ctrl.currentKeyframeIndex(), -1);
+    }
+
+    void nearestKeyframeMs_queriesWithoutSideEffects()
+    {
+        SegmentTableModel model;
+        AppController ctrl(&model);
+        QCOMPARE(ctrl.nearestKeyframeMs(500), -1);
+
+        ctrl.setKeyframesForTesting({ 0, 2000, 4000 });
+        QSignalSpy positionSpy(&ctrl, &AppController::positionMsChanged);
+        QCOMPARE(ctrl.nearestKeyframeMs(900), 0);
+        QCOMPARE(ctrl.nearestKeyframeMs(1100), 2000);
+        QCOMPARE(ctrl.nearestKeyframeMs(99999), 4000);
+        QCOMPARE(positionSpy.size(), 0);
+    }
+
+    void keyframesMs_exposesKeyframeList()
+    {
+        SegmentTableModel model;
+        AppController ctrl(&model);
+        QCOMPARE(ctrl.keyframesMs().size(), 0);
+
+        ctrl.setKeyframesForTesting({ 0, 1500, 3000 });
+        const QVariantList list = ctrl.keyframesMs();
+        QCOMPARE(list.size(), 3);
+        QCOMPARE(list.at(1).toLongLong(), 1500);
+    }
+
+    void setSegmentBounds_snapsValidatesAndUndoes()
+    {
+        auto *model = makeModelWithSegments();
+        AppController ctrl(model);
+        ctrl.setKeyframesForTesting({ 0, 1000, 2000, 5000, 8000 });
+
+        // Off-keyframe values snap (1100 -> 1000, 4700 -> 5000).
+        ctrl.setSegmentBounds(0, 1100, 4700);
+        QCOMPARE(model->segments().at(0).inMs, 1000);
+        QCOMPARE(model->segments().at(0).outMs, 5000);
+
+        ctrl.undo();
+        QCOMPARE(model->segments().at(0).inMs, 0);
+        QCOMPARE(model->segments().at(0).outMs, 1000);
+
+        ctrl.redo();
+        QCOMPARE(model->segments().at(0).inMs, 1000);
+        QCOMPARE(model->segments().at(0).outMs, 5000);
+    }
+
+    void setSegmentBounds_rejectsInvertedBounds()
+    {
+        auto *model = makeModelWithSegments();
+        AppController ctrl(model);
+        ctrl.setKeyframesForTesting({ 0, 1000, 2000, 5000, 8000 });
+
+        QSignalSpy toastSpy(&ctrl, &AppController::toastRequested);
+        ctrl.setSegmentBounds(0, 5000, 1000);
+
+        QCOMPARE(model->segments().at(0).inMs, 0);
+        QCOMPARE(model->segments().at(0).outMs, 1000);
+        QCOMPARE(toastSpy.size(), 1);
+        QCOMPARE(toastSpy.takeFirst().at(1).toString(), QString("error"));
+        QVERIFY(!ctrl.canUndo());
+    }
+
+    void renameSegment_roundTripsThroughUndo()
+    {
+        auto *model = makeModelWithSegments();
+        AppController ctrl(model);
+
+        ctrl.renameSegment(0, "  Opening Title  ");
+        QCOMPARE(model->segments().at(0).name, QString("Opening Title"));
+
+        ctrl.undo();
+        QCOMPARE(model->segments().at(0).name, QString("A"));
+
+        ctrl.redo();
+        QCOMPARE(model->segments().at(0).name, QString("Opening Title"));
+
+        // Empty rename is a no-op, not an undo entry.
+        const int undoBefore = ctrl.canUndo() ? 1 : 0;
+        ctrl.renameSegment(0, "   ");
+        QCOMPARE(model->segments().at(0).name, QString("Opening Title"));
+        QCOMPARE(ctrl.canUndo() ? 1 : 0, undoBefore);
+    }
+
+    void setSegmentNotes_roundTripsThroughUndo()
+    {
+        auto *model = makeModelWithSegments();
+        AppController ctrl(model);
+
+        ctrl.setSegmentNotes(1, "updated note");
+        QCOMPARE(model->segments().at(1).notes, QString("updated note"));
+
+        ctrl.undo();
+        QCOMPARE(model->segments().at(1).notes, QString("note"));
+
+        ctrl.redo();
+        QCOMPARE(model->segments().at(1).notes, QString("updated note"));
+    }
+
+    void frameGrabber_buildsExactFfmpegArguments()
+    {
+        const QStringList args = FrameGrabber::grabArguments(QStringLiteral("/tmp/in.mp4"), 2500);
+        const QStringList expected {
+            "-hide_banner",
+            "-loglevel", "error",
+            "-ss", "2.500",
+            "-i", "/tmp/in.mp4",
+            "-frames:v", "1",
+            "-vf", "scale=min(1280\\,iw):-2",
+            "-f", "image2pipe",
+            "-vcodec", "bmp",
+            "-",
+        };
+        QCOMPARE(args, expected);
+        // Fast seek requires -ss before -i.
+        QVERIFY(args.indexOf("-ss") < args.indexOf("-i"));
+
+        // Width override flows into the scale filter.
+        const QStringList smaller = FrameGrabber::grabArguments(QStringLiteral("a.mov"), 0, 640);
+        QVERIFY(smaller.contains(QStringLiteral("scale=min(640\\,iw):-2")));
+    }
+
+    void clearPendingMarkers_resetsBothMarkers()
+    {
+        SegmentTableModel model;
+        AppController ctrl(&model);
+        ctrl.setKeyframesForTesting({ 0, 2000 });
+        ctrl.setIn();
+        ctrl.setOut();
+        QVERIFY(ctrl.hasPendingIn());
+        QVERIFY(ctrl.hasPendingOut());
+
+        QSignalSpy markerSpy(&ctrl, &AppController::markersChanged);
+        ctrl.clearPendingMarkers();
+        QVERIFY(!ctrl.hasPendingIn());
+        QVERIFY(!ctrl.hasPendingOut());
+        QCOMPARE(ctrl.pendingInMs(), -1);
+        QCOMPARE(ctrl.pendingOutMs(), -1);
+        QCOMPARE(markerSpy.size(), 1);
+
+        // Already clear: no extra signal.
+        ctrl.clearPendingMarkers();
+        QCOMPARE(markerSpy.size(), 1);
     }
 };
 

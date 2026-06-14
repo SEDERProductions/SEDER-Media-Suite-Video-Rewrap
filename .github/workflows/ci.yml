@@ -66,4 +66,25 @@ jobs:
         run: cmake --build qt/build/release --config Release
 
       - name: Qt tests
-        run: ctest --test-dir qt/build/release --build-config Release --output-on-failure --verbose
+        shell: bash
+        run: |
+          set +e
+          ctest --test-dir qt/build/release --build-config Release --output-on-failure --verbose
+          code=$?
+          if [ "$code" -ne 0 ]; then
+            echo "===== ctest failed (exit $code); re-running app-controller-tests directly for diagnostics ====="
+            exe=$(ls "qt/build/release/Release/app-controller-tests.exe" \
+                     "qt/build/release/app-controller-tests" 2>/dev/null | head -1)
+            echo "binary: $exe"
+            # Force Qt diagnostics to stderr (Windows otherwise routes qFatal/
+            # qWarning to the debugger, invisible in CI) and run QTest verbose
+            # so the last-printed function points at the failure.
+            QT_QPA_PLATFORM=offscreen \
+              QT_FORCE_STDERR_LOGGING=1 \
+              QT_ASSUME_STDERR_HAS_CONSOLE=1 \
+              "$exe" -v2 2>&1
+            echo "direct exit code: $?"
+            echo "===== Testing/Temporary/LastTest.log ====="
+            cat qt/build/release/Testing/Temporary/LastTest.log 2>/dev/null || true
+            exit 1
+          fi

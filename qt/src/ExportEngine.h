@@ -61,7 +61,8 @@ signals:
     void exportModeChanged(QString mode);
     void logMessage(QString message);
     void errorReport(QString details);
-
+    // Terminal outcome of an export job (not emitted for cancels).
+    void finished(bool ok, QString message);
 
 private:
     bool requestOverwriteApproval(const QString &outputPath);
