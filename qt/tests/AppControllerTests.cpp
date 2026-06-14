@@ -3,6 +3,7 @@
 #include "RecentFilesModel.h"
 #include "UpdateChecker.h"
 
+#include <QCoreApplication>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
@@ -22,6 +23,19 @@ private:
     }
 
 private slots:
+    void initTestCase()
+    {
+        // QSettings only persists reliably with an organization/application
+        // name set (the real app sets these in main.cpp; QTEST_MAIN does
+        // not). Force IniFormat so the recent-files round-trip is file-based
+        // and identical on every platform — the Windows registry backend
+        // otherwise returns an empty list on reload and fails
+        // recentFilesModel_dedupesAndCapsAtMax.
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QCoreApplication::setOrganizationName(QStringLiteral("SederProductionsTest"));
+        QCoreApplication::setApplicationName(QStringLiteral("VideoRewrapTests"));
+    }
+
     void constructor_setsDefaults()
     {
         SegmentTableModel model;
