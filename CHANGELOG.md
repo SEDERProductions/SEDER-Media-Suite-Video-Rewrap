@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0
 
 Complete UI overhaul: a Premiere-style charcoal workspace with a visual
 timeline and a live program monitor.
