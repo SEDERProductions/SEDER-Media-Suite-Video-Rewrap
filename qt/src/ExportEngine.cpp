@@ -10,7 +10,9 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QPointer>
 #include <QThread>
+#include <QSharedPointer>
 
 namespace {
 struct TempDirGuard {
@@ -31,6 +33,23 @@ QString displayPath(const QString &path)
 ExportEngine::ExportEngine(QObject *parent)
     : QObject(parent)
 {
+}
+
+void ExportEngine::postLogMessage(const QString &message)
+{
+    // Safe to call from any thread; the signal is connected with
+    // AutoConnection which becomes QueuedConnection across threads.
+    emit logMessage(message);
+}
+
+void ExportEngine::postErrorReport(const QString &details)
+{
+    emit errorReport(details);
+}
+
+void ExportEngine::postFinishedSignal(bool ok, const QString &message)
+{
+    emit finished(ok, message);
 }
 
 void ExportEngine::setExportMode(const QString &mode)
@@ -156,125 +175,137 @@ void ExportEngine::startExport(
     setProgress(0.05);
     emit logMessage("Exporting with FFmpeg stream copy only...");
 
-    QThread *worker = QThread::create([this, sourcePath, outputPath, tempRoot, plan] {
+    // Snapshot the plan on the heap so the worker thread doesn't capture
+    // a giant QJsonObject by value. QPointer keeps the worker safe if
+    // ExportEngine is destroyed (e.g. app shutdown) before the export
+    // finishes.
+    const QSharedPointer<const QJsonObject> planPtr(
+        new QJsonObject(plan), [](const QJsonObject *p) { delete p; });
+    const int segmentCount = plan.value("segments").toArray().size();
+    const int exportModeIsConcat = m_exportMode == "concat_single" ? 1 : 0;
+
+    QPointer<ExportEngine> self(this);
+    QThread *worker = QThread::create([self, outputPath, tempRoot, planPtr, segmentCount, exportModeIsConcat] {
         TempDirGuard guard { tempRoot };
 
-        if (!QDir().mkpath(tempRoot)) {
-            QMetaObject::invokeMethod(this, [this, tempRoot] {
-                setBusy(false);
-                setProgress(0.0);
-                emit logMessage(QStringLiteral("Unable to create temporary export folder: %1")
-                    .arg(displayPath(tempRoot)));
+        // m_busy / m_progress are non-atomic, so any state mutation from
+        // the worker must be queued back to the GUI thread. Signal
+        // emission is thread-safe via auto-connection (becomes
+        // QueuedConnection across threads).
+        auto queueToMain = [self](std::function<void(ExportEngine *)> fn) {
+            if (!self) return;
+            QMetaObject::invokeMethod(self.data(), [self, fn] {
+                if (self) fn(self.data());
             }, Qt::QueuedConnection);
+        };
+        auto postLog = [self](const QString &message) {
+            if (self) self->postLogMessage(message);
+        };
+        auto postError = [self, queueToMain, postLog](const QString &userMessage, const QString &details) {
+            if (self) self->postErrorReport(details);
+            postLog(userMessage);
+            queueToMain([](ExportEngine *e) { e->setBusy(false); e->setProgress(0.0); });
+        };
+
+        if (!QDir().mkpath(tempRoot)) {
+            postError(QStringLiteral("Unable to create temporary export folder: %1").arg(displayPath(tempRoot)),
+                      QStringLiteral("Failed to create temp dir: %1").arg(tempRoot));
             return;
         }
 
-        const QJsonArray plannedSegments = plan.value("segments").toArray();
+        const QJsonArray plannedSegments = planPtr->value("segments").toArray();
         for (int i = 0; i < plannedSegments.size(); ++i) {
-            if (m_cancelExport) {
-                QMetaObject::invokeMethod(this, [this] {
-                    setBusy(false);
-                    setProgress(0.0);
-                    emit logMessage("Export cancelled.");
-                }, Qt::QueuedConnection);
+            if (self && self->m_cancelExport) {
+                postLog("Export cancelled.");
+                queueToMain([](ExportEngine *e) { e->setBusy(false); e->setProgress(0.0); });
                 return;
             }
             const QJsonObject item = plannedSegments.at(i).toObject();
             const QString path = item.value("path").toString();
             const QJsonObject cmdObj = item.value("command").toObject();
             const RustBridge::Command command = RustBridge::commandFromJson(cmdObj);
-            QMetaObject::invokeMethod(this, [this, i, plannedSegments] {
-                setProgress(static_cast<double>(i) / static_cast<double>(plannedSegments.size() + 1));
-                emit logMessage(QStringLiteral("Exporting segment %1 of %2...")
-                    .arg(i + 1)
-                    .arg(plannedSegments.size()));
-            }, Qt::QueuedConnection);
-            const ProcessResult result = ProcessUtil::runCommand(command.program, command.args, &m_cancelExport);
+            const int idx = i;
+            const int total = segmentCount;
+            postLog(QStringLiteral("Exporting segment %1 of %2...").arg(idx + 1).arg(total));
+            queueToMain([idx, total](ExportEngine *e) {
+                e->setProgress(static_cast<double>(idx) / static_cast<double>(total + 1));
+            });
+            std::atomic_bool *cancel = self ? &self->m_cancelExport : nullptr;
+            const ProcessResult result = ProcessUtil::runCommand(command.program, command.args, cancel);
             if (!result.ok) {
                 const int segmentIndex = i + 1;
-                QMetaObject::invokeMethod(this, [this, path, result, segmentIndex, plannedSegments] {
-                    setBusy(false);
-                    setProgress(0.0);
-                    const QString summary = QStringLiteral("Segment export failed for %1\n%2")
-                        .arg(displayPath(path), result.stderrText);
-                    const QString details = QStringLiteral(
-                        "Segment %1 of %2 failed\nOutput path: %3\nFFmpeg exit code: %4\n\n--- ffmpeg stderr ---\n%5")
-                        .arg(segmentIndex)
-                        .arg(plannedSegments.size())
-                        .arg(displayPath(path))
-                        .arg(result.exitCode)
-                        .arg(result.stderrText);
-                    emit errorReport(details);
-                    emit logMessage(summary);
-                    emit finished(false, QStringLiteral("Segment %1 export failed").arg(segmentIndex));
-                }, Qt::QueuedConnection);
+                const QString details = QStringLiteral(
+                    "Segment %1 of %2 failed\nOutput path: %3\nFFmpeg exit code: %4\n\n--- ffmpeg stderr ---\n%5")
+                    .arg(segmentIndex)
+                    .arg(segmentCount)
+                    .arg(displayPath(path))
+                    .arg(result.exitCode)
+                    .arg(result.stderrText);
+                const QString summary = QStringLiteral("Segment export failed for %1\n%2")
+                    .arg(displayPath(path), result.stderrText);
+                postError(summary, details);
+                if (self) {
+                    self->postFinishedSignal(false, QStringLiteral("Segment %1 export failed").arg(segmentIndex));
+                }
                 return;
             }
         }
 
         ProcessResult result{ true, "", "", 0 };
-        if (m_exportMode == "concat_single") {
-            QFile listFile(plan.value("listPath").toString());
+        if (exportModeIsConcat) {
+            QFile listFile(planPtr->value("listPath").toString());
             if (!listFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
-                const QString error = listFile.errorString();
-                QMetaObject::invokeMethod(this, [this, error] {
-                    setBusy(false);
-                    setProgress(0.0);
-                    emit logMessage(QStringLiteral("Unable to write concat list: %1").arg(error));
-                }, Qt::QueuedConnection);
+                postError(QStringLiteral("Unable to write concat list: %1").arg(listFile.errorString()),
+                          QStringLiteral("Concat list open failed: %1").arg(listFile.errorString()));
                 return;
             }
-            const QByteArray listBytes = plan.value("listText").toString().toUtf8();
+            const QByteArray listBytes = planPtr->value("listText").toString().toUtf8();
             if (listFile.write(listBytes) != listBytes.size()) {
                 const QString error = listFile.errorString();
                 listFile.close();
-                QMetaObject::invokeMethod(this, [this, error] {
-                    setBusy(false);
-                    setProgress(0.0);
-                    emit logMessage(QStringLiteral("Unable to write concat list: %1").arg(error));
-                }, Qt::QueuedConnection);
+                postError(QStringLiteral("Unable to write concat list: %1").arg(error),
+                          QStringLiteral("Concat list write failed: %1").arg(error));
                 return;
             }
             listFile.flush();
             if (listFile.error() != QFileDevice::NoError) {
                 const QString error = listFile.errorString();
                 listFile.close();
-                QMetaObject::invokeMethod(this, [this, error] {
-                    setBusy(false);
-                    setProgress(0.0);
-                    emit logMessage(QStringLiteral("Unable to flush concat list: %1").arg(error));
-                }, Qt::QueuedConnection);
+                postError(QStringLiteral("Unable to flush concat list: %1").arg(error),
+                          QStringLiteral("Concat list flush failed: %1").arg(error));
                 return;
             }
             listFile.close();
-            QMetaObject::invokeMethod(this, [this] {
-                setProgress(0.9);
-                emit logMessage("Concatenating enabled segments...");
-            }, Qt::QueuedConnection);
-            const QJsonObject concatCmdObj = plan.value("concatCommand").toObject();
+            postLog("Concatenating enabled segments...");
+            queueToMain([](ExportEngine *e) { e->setProgress(0.9); });
+            const QJsonObject concatCmdObj = planPtr->value("concatCommand").toObject();
             const RustBridge::Command concat = RustBridge::commandFromJson(concatCmdObj);
-            result = ProcessUtil::runCommand(concat.program, concat.args, &m_cancelExport);
+            std::atomic_bool *cancel = self ? &self->m_cancelExport : nullptr;
+            result = ProcessUtil::runCommand(concat.program, concat.args, cancel);
         }
 
-        QMetaObject::invokeMethod(this, [this, result, outputPath] {
-            setBusy(false);
-            if (result.ok) {
-                setProgress(1.0);
-                emit logMessage(QStringLiteral("Export complete: %1").arg(displayPath(outputPath)));
-                emit finished(true, QStringLiteral("Export complete"));
-            } else {
-                setProgress(0.0);
-                const QString details = QStringLiteral(
-                    "Concat step failed\nOutput path: %1\nFFmpeg exit code: %2\n\n--- ffmpeg stderr ---\n%3")
-                    .arg(displayPath(outputPath))
-                    .arg(result.exitCode)
-                    .arg(result.stderrText);
-                emit errorReport(details);
-                emit logMessage(QStringLiteral("Export failed. No re-encode fallback was attempted.\n%1")
-                    .arg(result.stderrText));
-                emit finished(false, QStringLiteral("Export failed"));
-            }
-        }, Qt::QueuedConnection);
+        if (self) {
+            const ProcessResult finalResult = result;
+            queueToMain([finalResult, outputPath](ExportEngine *e) {
+                e->setBusy(false);
+                if (finalResult.ok) {
+                    e->setProgress(1.0);
+                    e->postLogMessage(QStringLiteral("Export complete: %1").arg(displayPath(outputPath)));
+                    e->postFinishedSignal(true, QStringLiteral("Export complete"));
+                } else {
+                    e->setProgress(0.0);
+                    const QString details = QStringLiteral(
+                        "Concat step failed\nOutput path: %1\nFFmpeg exit code: %2\n\n--- ffmpeg stderr ---\n%3")
+                        .arg(displayPath(outputPath))
+                        .arg(finalResult.exitCode)
+                        .arg(finalResult.stderrText);
+                    e->postErrorReport(details);
+                    e->postLogMessage(QStringLiteral("Export failed. No re-encode fallback was attempted.\n%1")
+                        .arg(finalResult.stderrText));
+                    e->postFinishedSignal(false, QStringLiteral("Export failed"));
+                }
+            });
+        }
     });
     connect(worker, &QThread::finished, worker, &QObject::deleteLater);
     worker->start();

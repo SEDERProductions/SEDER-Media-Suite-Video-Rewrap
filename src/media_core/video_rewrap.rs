@@ -474,6 +474,21 @@ fn migrate_project_value(mut value: Value) -> Result<Value> {
         object.insert("version".into(), Value::from(CURRENT_PROJECT_VERSION));
     }
 
+    // v0 projects also predated the `enabled` field. Without an
+    // explicit value, serde's `default = "enabled_default"` (which
+    // returns `true`) would silently re-enable any segment the user
+    // had disabled. Stamp `enabled: true` explicitly so the field is
+    // materialised for v0 projects and re-saves are deterministic.
+    if let Some(segments) = object.get_mut("segments").and_then(|v| v.as_array_mut()) {
+        for segment in segments.iter_mut() {
+            if let Some(obj) = segment.as_object_mut() {
+                if !obj.contains_key("enabled") {
+                    obj.insert("enabled".into(), Value::Bool(true));
+                }
+            }
+        }
+    }
+
     Ok(value)
 }
 

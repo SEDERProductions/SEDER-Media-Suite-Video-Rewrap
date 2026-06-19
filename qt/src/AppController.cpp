@@ -12,6 +12,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QProcess>
+#include <QSet>
 #include <QSettings>
 #include <QStyleHints>
 #include <QUrl>
@@ -153,6 +154,7 @@ AppController::AppController(SegmentTableModel *segments, QObject *parent)
     }
 
     connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, [this] {
+        m_exportEngine->cancel();
         killPreviewPids(m_previewPids);
     });
 }
@@ -601,7 +603,9 @@ void AppController::setIn()
         setLogText(tr("Probe a video before setting an in point."));
         return;
     }
-    m_pendingIn = currentKeyframeMs();
+    const qint64 inMs = currentKeyframeMs();
+    if (m_hasPendingIn && m_pendingIn == inMs) return;
+    m_pendingIn = inMs;
     m_hasPendingIn = true;
     emit markersChanged();
 }
@@ -612,7 +616,9 @@ void AppController::setOut()
         setLogText(tr("Probe a video before setting an out point."));
         return;
     }
-    m_pendingOut = currentKeyframeMs();
+    const qint64 outMs = currentKeyframeMs();
+    if (m_hasPendingOut && m_pendingOut == outMs) return;
+    m_pendingOut = outMs;
     m_hasPendingOut = true;
     emit markersChanged();
 }
@@ -688,9 +694,22 @@ void AppController::addSegment(const QString &name, const QString &notes)
         setLogText(tr("Set both in and out keyframes first."));
         return;
     }
-    const QString segmentName = name.trimmed().isEmpty()
-        ? tr("Segment %1").arg(m_segments->rowCount() + 1)
-        : name.trimmed();
+    // Auto-name: pick the smallest positive integer that does not collide
+    // with an existing segment name. After remove/add cycles, a naive
+    // "rowCount()+1" can duplicate (e.g. delete "Segment 1" then add →
+    // still "Segment 1" if "Segment 2" is still around).
+    QString segmentName = name.trimmed();
+    if (segmentName.isEmpty()) {
+        QSet<QString> existing;
+        for (const SegmentRow &row : m_segments->segments()) {
+            existing.insert(row.name);
+        }
+        int idx = m_segments->rowCount() + 1;
+        while (existing.contains(QStringLiteral("Segment %1").arg(idx))) {
+            ++idx;
+        }
+        segmentName = tr("Segment %1").arg(idx);
+    }
     SegmentRow segment { segmentName, m_pendingIn, m_pendingOut, notes, true };
     QJsonArray candidate = m_segments->toJsonArray();
     candidate.push_back(QJsonObject {
@@ -775,8 +794,8 @@ void AppController::setTheme(const QString &theme)
     const bool changed = normalized != m_theme || dark != m_darkMode;
     m_theme = normalized;
     m_darkMode = dark;
-    QSettings().setValue("theme", m_theme);
     if (changed) {
+        QSettings().setValue("theme", m_theme);
         emit themeChanged();
     }
 }
@@ -812,10 +831,12 @@ void AppController::setCustomFfmpegDir(const QString &dir)
     m_customFfmpegDir = normalized;
     QSettings().setValue(kCustomFfmpegDirKey, m_customFfmpegDir);
     applyCustomFfmpegDirToEnvironment();
-    m_probeEngine->recheckTools();
-    refreshFfmpegVersion();
+    // ProbeEngine::recheckBackground() spawns its own QThread so the
+    // GUI thread isn't blocked by up to 3 sequential `ffmpeg -version`
+    // subprocesses; refreshFfmpegVersion() is invoked from the
+    // toolsChanged signal handler when the worker finishes.
+    m_probeEngine->recheckBackground();
     emit customFfmpegDirChanged();
-    emit toolsChanged();
 }
 
 void AppController::clearCustomFfmpegDir()

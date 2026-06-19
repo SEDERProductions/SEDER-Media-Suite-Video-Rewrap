@@ -17,8 +17,12 @@ void AddSegmentCommand::redo()
 
 void AddSegmentCommand::undo()
 {
-    if (m_insertedAt < 0) return;
-    m_model->remove(m_insertedAt);
+    // append() always adds to the end, so the row we added is now
+    // (rowCount - 1) — use that, not the possibly-stale m_insertedAt,
+    // which would point at a different row once other commands have run
+    // (e.g. user adds A, adds B, removes A, then undoes B).
+    if (m_model->rowCount() == 0) return;
+    m_model->remove(m_model->rowCount() - 1);
     if (m_ctx) m_ctx->onSegmentsMutated();
 }
 
