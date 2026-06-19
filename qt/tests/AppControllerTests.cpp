@@ -276,6 +276,52 @@ private slots:
         QCOMPARE(model.rowCount(), 1);
     }
 
+    // Regression test for the AddSegmentCommand stale-index bug. A naive
+    // implementation captured `m_insertedAt = rowCount()` on the first
+    // redo and then re-used that index in `undo()`. After an intervening
+    // remove(), `m_insertedAt` pointed at the wrong row.
+    void undoRedo_addSegmentSurvivesInterveningRemove()
+    {
+        SegmentTableModel model;
+        AppController ctrl(&model);
+        ctrl.setKeyframesForTesting({ 0, 1000, 2500, 5000 });
+
+        // Add A (0-1000): set IN at keyframe 0, move to keyframe 1, set OUT.
+        ctrl.setIn();               // pendingIn  = 0    (index 0)
+        ctrl.nextKeyframe();        // currentIndex → 1 (1000ms)
+        ctrl.setOut();              // pendingOut = 1000
+        ctrl.addSegment("A", "");
+
+        // Add B (2500-5000): move to keyframe 2, set IN, move to 3, set OUT.
+        ctrl.nextKeyframe();        // currentIndex → 2 (2500ms)
+        ctrl.setIn();               // pendingIn  = 2500
+        ctrl.nextKeyframe();        // currentIndex → 3 (5000ms)
+        ctrl.setOut();              // pendingOut = 5000
+        ctrl.addSegment("B", "");
+        QCOMPARE(model.rowCount(), 2);
+
+        // Remove the first row, leaving only B at index 0
+        ctrl.removeSegment(0);
+        QCOMPARE(model.rowCount(), 1);
+        QCOMPARE(model.segments().at(0).name, QString("B"));
+
+        // Now undo all the way back to empty. The naive
+        // AddSegmentCommand would call remove(m_insertedAt) which, after
+        // an intervening remove, pointed at the wrong row. With the fix,
+        // undo always removes the last row (since append adds to the end).
+        ctrl.undo(); // undo RemoveCmd_0 → restores A at row 0: [A, B]
+        QCOMPARE(model.rowCount(), 2);
+        QCOMPARE(model.segments().at(0).name, QString("A"));
+        QCOMPARE(model.segments().at(1).name, QString("B"));
+
+        ctrl.undo(); // undo AddCmd_B → removes last: [A]
+        QCOMPARE(model.rowCount(), 1);
+        QCOMPARE(model.segments().at(0).name, QString("A"));
+
+        ctrl.undo(); // undo AddCmd_A → removes last: []
+        QCOMPARE(model.rowCount(), 0);
+    }
+
     void undoRedo_toggleSegmentRestoresPreviousEnabled()
     {
         SegmentTableModel model;
@@ -309,6 +355,46 @@ private slots:
         QCOMPARE(model.rowCount(), 2);
         QCOMPARE(model.segments().at(0).name, QString("A"));
         QCOMPARE(model.segments().at(0).notes, QString("alpha"));
+    }
+
+    // Regression test for the auto-name collision bug. Naive
+    // `m_segments->rowCount() + 1` could produce duplicate "Segment N"
+    // names after a delete.
+    void addSegment_generatesUniqueAutoName()
+    {
+        SegmentTableModel model;
+        AppController ctrl(&model);
+        ctrl.setKeyframesForTesting({ 0, 1000, 2500, 5000 });
+
+        // Add three segments (all 0-1000; the test is about naming, not
+        // bounds, and validate_segments allows overlapping segments).
+        auto addOne = [&] {
+            ctrl.seekToMs(0);          // keyframe 0 → 0ms
+            ctrl.setIn();              // pendingIn  = 0
+            ctrl.nextKeyframe();       // keyframe 1 → 1000ms
+            ctrl.setOut();             // pendingOut = 1000
+            ctrl.addSegment(QString(), QString());
+        };
+        addOne();
+        addOne();
+        addOne();
+        QCOMPARE(model.rowCount(), 3);
+        QCOMPARE(model.segments().at(0).name, QString("Segment 1"));
+        QCOMPARE(model.segments().at(1).name, QString("Segment 2"));
+        QCOMPARE(model.segments().at(2).name, QString("Segment 3"));
+
+        // Remove the first one; the next auto-name must NOT collide.
+        ctrl.removeSegment(0);
+        addOne();
+        QCOMPARE(model.rowCount(), 3);
+        const QStringList names {
+            model.segments().at(0).name,
+            model.segments().at(1).name,
+            model.segments().at(2).name,
+        };
+        // All names must be unique.
+        const QSet<QString> uniqueNames(names.begin(), names.end());
+        QCOMPARE(uniqueNames.size(), 3);
     }
 
     void updateChecker_emitsAvailableForNewerVersion()
@@ -521,6 +607,34 @@ private slots:
         // Already clear: no extra signal.
         ctrl.clearPendingMarkers();
         QCOMPARE(markerSpy.size(), 1);
+    }
+
+    // Regression test: setting the same IN marker twice should not emit.
+    void setIn_doesNotEmitWhenValueUnchanged()
+    {
+        SegmentTableModel model;
+        AppController ctrl(&model);
+        ctrl.setKeyframesForTesting({ 0, 2000 });
+
+        ctrl.setIn();
+        QSignalSpy markerSpy(&ctrl, &AppController::markersChanged);
+        ctrl.setIn();
+        QCOMPARE(markerSpy.size(), 0);
+        QVERIFY(ctrl.hasPendingIn());
+    }
+
+    // Regression test: setting the same OUT marker twice should not emit.
+    void setOut_doesNotEmitWhenValueUnchanged()
+    {
+        SegmentTableModel model;
+        AppController ctrl(&model);
+        ctrl.setKeyframesForTesting({ 0, 2000 });
+
+        ctrl.setOut();
+        QSignalSpy markerSpy(&ctrl, &AppController::markersChanged);
+        ctrl.setOut();
+        QCOMPARE(markerSpy.size(), 0);
+        QVERIFY(ctrl.hasPendingOut());
     }
 };
 

@@ -241,6 +241,56 @@ fn rejects_project_saved_by_newer_app() {
 }
 
 #[test]
+fn migrates_legacy_project_backfills_enabled_field() {
+    // Pre-v1 projects omitted the `enabled` field. serde's `default = "enabled_default"`
+    // returns `true`, but if the user explicitly saved `false` in some future schema
+    // we'd accidentally re-enable it. The migration must stamp an explicit value so
+    // the field is materialised for the deserializer and the on-disk representation
+    // is unambiguous on re-save.
+    let legacy_no_enabled = r#"{
+        "source_file": "src.mov",
+        "output_file": "out.mov",
+        "segments": [
+            { "name": "A", "in_ms": 0, "out_ms": 1000, "notes": "" }
+        ]
+    }"#;
+    let project = parse_project_json(legacy_no_enabled).unwrap();
+    assert_eq!(project.segments.len(), 1);
+    assert!(
+        project.segments[0].enabled,
+        "missing `enabled` should default to true"
+    );
+
+    // Re-serialise and confirm the field is now present (no longer relying on serde
+    // defaults to materialise the value on the next load).
+    let json = serde_json::to_string(&project).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        value["segments"][0]["enabled"],
+        serde_json::Value::Bool(true),
+        "re-saved v0 project should have an explicit `enabled` field"
+    );
+}
+
+#[test]
+fn migrates_legacy_project_preserves_explicit_enabled_false() {
+    // If a v0 file already has `enabled: false` (possible after a manual edit or
+    // a forward-port), the migration must not clobber it.
+    let json = r#"{
+        "source_file": "src.mov",
+        "output_file": "out.mov",
+        "segments": [
+            { "name": "A", "in_ms": 0, "out_ms": 1000, "notes": "", "enabled": false }
+        ]
+    }"#;
+    let project = parse_project_json(json).unwrap();
+    assert!(
+        !project.segments[0].enabled,
+        "explicit false must be preserved"
+    );
+}
+
+#[test]
 fn roundtrips_migrated_project_through_save() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("legacy.json");

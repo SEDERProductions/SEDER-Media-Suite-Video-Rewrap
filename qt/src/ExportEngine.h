@@ -23,6 +23,13 @@ public:
 
     void setExportMode(const QString &mode);
 
+    // Public signal-relay helpers so worker threads can post messages back
+    // to the GUI thread without bypassing the signal machinery. These are
+    // no-ops if the engine is being destroyed (use QPointer at call site).
+    void postLogMessage(const QString &message);
+    void postErrorReport(const QString &details);
+    void postFinishedSignal(bool ok, const QString &message);
+
     bool ensureCanExport(
         bool ffmpegReady,
         bool ffprobeReady,
